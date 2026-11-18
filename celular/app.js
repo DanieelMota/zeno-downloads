@@ -104,6 +104,25 @@
     var btn = h('button', { class: 'btn alt', id: 'instalarBtn', hidden: !pedidoInstalar, onclick: function () { if (pedidoInstalar) { pedidoInstalar.prompt(); pedidoInstalar = null; btn.hidden = true; } } }, 'Instalar o app');
     return h('div', { class: 'stack' }, btn, h('p', { class: 'hint', text: 'No Chrome: menu ⋮ › Instalar app (ou Adicionar à tela inicial).' }));
   }
+  // 1.9.13: o login fica salvo. A sessão mora no aparelho e, se ela se perder (o iPhone limpou, o token venceu),
+  // o app entra de novo sozinho com o e-mail + código guardados aqui. Só "Sair" apaga.
+  try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (_) { /* opcional */ }
+  async function pedirSessao(e, p) {
+    var r = await fetch(CFG.conta, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: e, pedido: p }) });
+    var j = await r.json().catch(function () { return {}; });
+    if (!j.ok || !j.sessao) { var err = new Error(j.mensagem || 'Não consegui entrar. Tente de novo.'); err.codigo = j.codigo || ''; throw err; }
+    sb.auth.setSession(j.sessao);
+    LS.set('zeno.conta', { e: e, p: p });
+  }
+  async function reentrar() {
+    var c = LS.get('zeno.conta', null);
+    if (!c || !c.e || !c.p) return false;
+    try { await pedirSessao(c.e, c.p); return true; }
+    catch (err) {
+      if (/nao_encontrada|inativa|bloqueada/.test(err.codigo)) LS.set('zeno.conta', null); // compra cancelada: aí sim pede de novo
+      return false;
+    }
+  }
   function renderLogin(msg, kind) {
     clear(app);
     var email = h('input', { type: 'email', placeholder: 'e-mail da compra', autocomplete: 'email', autocapitalize: 'off', value: LS.get('zeno.email', '') });
@@ -116,10 +135,7 @@
       note.textContent = 'Entrando…'; note.className = 'hint'; botao.disabled = true;
       try {
         LS.set('zeno.email', e);
-        var r = await fetch(CFG.conta, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: e, pedido: p }) });
-        var j = await r.json().catch(function () { return {}; });
-        if (!j.ok || !j.sessao) throw new Error(j.mensagem || 'Não consegui entrar. Tente de novo.');
-        sb.auth.setSession(j.sessao);
+        await pedirSessao(e, p);
         start();
       } catch (err) { note.textContent = /Failed to fetch|NetworkError/i.test(err.message) ? 'Sem internet. Confira a conexão e tente de novo.' : err.message; note.className = 'hint err'; botao.disabled = false; }
     };
@@ -1049,7 +1065,7 @@
   }
   async function logout() {
     try { await sb.db.remove('zeno_push', { device: 'eq.' + DEV }); } catch (_) { /* sem internet */ }
-    sb.auth.signOut(); stop(); renderLogin('Você saiu.');
+    sb.auth.signOut(); LS.set('zeno.conta', null); stop(); renderLogin('Você saiu.');
   }
 
   // ---------- eventos do PC ----------
@@ -1132,8 +1148,12 @@
       var slot = document.getElementById('offline'); if (slot) slot.remove();
     } catch (e) {
       if (e.offline) { if (!document.getElementById('offline')) { var b = h('div', { class: 'banner info', id: 'offline', text: 'Sem internet no celular. Tentando de novo…' }); var s = document.getElementById('bannerSlot'); if (s) s.append(b); } }
-      else if (/Sem login|Invalid Refresh|incorretos/i.test(e.message) || !sb.auth.signedIn()) { stop(); renderLogin('Sua sessão expirou. Entre de novo.', 'err'); }
-      else if (/row-level security|42501/i.test(e.message)) { stop(); sb.auth.signOut(); renderLogin('Sua assinatura do Zeno não está ativa. Renove para usar o celular.', 'err'); }
+      else if (/Sem login|Invalid Refresh|incorretos/i.test(e.message) || !sb.auth.signedIn()) {
+        inflight = false;
+        if (await reentrar()) return;
+        stop(); renderLogin('Sua sessão expirou. Entre de novo.', 'err');
+      }
+      else if (/row-level security|42501/i.test(e.message)) { stop(); sb.auth.signOut(); LS.set('zeno.conta', null); renderLogin('Sua assinatura do Zeno não está ativa. Renove para usar o celular.', 'err'); }
     }
     inflight = false;
   }
@@ -1149,6 +1169,11 @@
 
   // ---------- início ----------
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(function () { /* sem cache offline */ });
-  finishGoogle().then(function (handled) { if (handled) return; if (sb.auth.signedIn()) start(); else renderLogin(); });
+  finishGoogle().then(async function (handled) {
+    if (handled) return;
+    if (sb.auth.signedIn()) { start(); return; }
+    if (LS.get('zeno.conta', null)) { clear(app); app.append(h('div', { class: 'login' }, mascotEl('big', 'happy'), h('p', { text: 'Entrando…' }))); if (await reentrar()) { start(); return; } }
+    renderLogin();
+  });
   window.__zeno = { S: S, sb: sb, tick: tick, onEvent: onEvent }; // para testes
 })();
