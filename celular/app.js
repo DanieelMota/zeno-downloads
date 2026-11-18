@@ -172,18 +172,33 @@
   }
 
   // ---------- estrutura principal ----------
-  var TABS = [['chat', '💬', 'Conversa'], ['ctl', '🎛️', 'Controle'], ['day', '📅', 'Dia'], ['lists', '✅', 'Listas'], ['files', '📎', 'Arquivos'], ['more', '⚙️', 'Mais']];
+  // 1.12: ícones desenhados (traço fino) no lugar dos emojis; Arquivos foi para dentro de "Mais" e entrou o Dinheiro
+  var ICONES = {
+    chat: 'M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-4.2 3.6c-.5.4-1.3.1-1.3-.6V16A2.5 2.5 0 0 1 4 13.5z',
+    day: 'M7 3v3M17 3v3M4.5 8.5h15M6 5h12a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM8 12.5h3v3H8z',
+    fin: 'M3.5 7.5A2.5 2.5 0 0 1 6 5h12a2.5 2.5 0 0 1 2.5 2.5v9A2.5 2.5 0 0 1 18 19H6a2.5 2.5 0 0 1-2.5-2.5zM3.5 10h17M15.5 14.5h2',
+    lists: 'M9 6.5h11M9 12h11M9 17.5h11M4 6.5l1 1 2-2M4 12l1 1 2-2M4 17.5l1 1 2-2',
+    ctl: 'M5 4v6M5 14v6M12 4v3M12 11v9M19 4v9M19 17v3M3 10h4M10 7h4M17 13h4',
+    more: 'M5 12h.01M12 12h.01M19 12h.01',
+    files: 'M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5',
+  };
+  function icone(id) {
+    var NS = 'http://www.w3.org/2000/svg'; var s = document.createElementNS(NS, 'svg'); s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('aria-hidden', 'true'); s.setAttribute('class', 'ic');
+    var p = document.createElementNS(NS, 'path'); p.setAttribute('d', ICONES[id] || ICONES.more); s.append(p); return s;
+  }
+  var TABS = [['chat', 'Conversa'], ['day', 'Hoje'], ['fin', 'Dinheiro'], ['lists', 'Listas'], ['ctl', 'Controle'], ['more', 'Mais']];
   function buildShell() {
     clear(app);
     topPill = h('div', { class: 'pill' }, h('i'), h('span', { text: '…' }));
     views = h('div', { class: 'views' });
     tabsEl = h('div', { class: 'tabs' });
     TABS.forEach(function (t) {
-      tabsEl.append(h('button', { 'data-tab': t[0], onclick: function () { go(t[0]); } }, h('span', { text: t[1] }), t[2]));
+      tabsEl.append(h('button', { 'data-tab': t[0], 'aria-label': t[1], onclick: function () { go(t[0]); } }, h('span', { class: 'tab-ic' }, icone(t[0])), h('em', { text: t[1] })));
     });
     MASC.top = mascotEl('logo', 'idle');
     MASC.top.addEventListener('click', function () { botMood(['love', 'laugh', 'cool', 'surprised'][Math.floor(Math.random() * 4)], 1800); });
-    app.append(h('div', { class: 'top' }, MASC.top, h('div', { class: 'top-t' }, h('h1', { text: 'Zeno' }), h('span', { class: 'top-sub', id: 'topSub', text: 'Seu assistente' })), topPill), h('div', { id: 'bannerSlot' }), views, tabsEl);
+    var hora = new Date().getHours(); var oi = hora < 5 ? 'Boa noite' : hora < 12 ? 'Bom dia' : hora < 18 ? 'Boa tarde' : 'Boa noite';
+    app.append(h('div', { class: 'top' }, MASC.top, h('div', { class: 'top-t' }, h('span', { class: 'top-sub', id: 'topSub', text: oi + ' 👋' }), h('h1', { id: 'topTitulo', text: 'Zeno' })), topPill), h('div', { id: 'bannerSlot' }), views, tabsEl);
     buildChat();
     go(S.tab);
   }
@@ -209,7 +224,7 @@
     if (tab === 'chat') S.unread = 0;
     updateTabs();
     Array.prototype.forEach.call(views.children, function (v) { v.hidden = true; });
-    if (tab === 'chat') { chatBox.hidden = false; scrollChat(); return; }
+    if (tab === 'chat') { var tt0 = document.getElementById('topTitulo'); if (tt0) tt0.textContent = 'Zeno'; chatBox.hidden = false; scrollChat(); return; }
     renderView();
   }
   var viewEl = null;
@@ -218,7 +233,8 @@
     if (DAYLIVE.t) { clearInterval(DAYLIVE.t); DAYLIVE.t = null; }
     if (viewEl) viewEl.remove();
     viewEl = h('div', { class: 'view' });
-    var fn = { ctl: viewControl, day: viewDay, lists: viewLists, files: viewFiles, more: viewMore }[S.tab];
+    var fn = { ctl: viewControl, day: viewDay, lists: viewLists, files: viewFiles, more: viewMore, fin: viewFin }[S.tab];
+    var tt = document.getElementById('topTitulo'); if (tt) tt.textContent = { chat: 'Zeno', day: 'Hoje', fin: 'Dinheiro', lists: 'Listas', ctl: 'Controle', more: 'Mais', files: 'Arquivos' }[S.tab] || 'Zeno';
     fn(viewEl);
     views.append(viewEl);
   }
@@ -969,6 +985,7 @@
       if (seenSync[r.key] === r.updated_at) return;
       seenSync[r.key] = r.updated_at;
       if (Array.isArray(r.value)) { S[r.key] = r.value; changed = true; }
+      else if (r.key === 'financas' && r.value && typeof r.value === 'object') { S.financas = r.value; changed = true; }
     });
     if (changed) refreshView();
   }
@@ -1027,9 +1044,129 @@
   }
 
   // ---------- mais ----------
+  // ---------- 1.12: Dinheiro (gestor financeiro, sincronizado com o PC) ----------
+  var FIN_CATS = [
+    ['mercado', '🛒', '#34d399', /mercado|supermercado|padaria|feira|hortifruti|acougue|atacadao/],
+    ['alimentação', '🍔', '#fb923c', /restaurante|lanche|ifood|pizza|hamburguer|almoco|jantar|cafe|sorvete|bar\b|churrasco|delivery|comida/],
+    ['transporte', '🚗', '#60a5fa', /uber|99\b|taxi|gasolina|combustivel|etanol|onibus|passagem|metro|estacionamento|pedagio|oficina|carro|moto/],
+    ['moradia', '🏠', '#a78bfa', /aluguel|condominio|luz|energia|agua|internet|gas\b|iptu|reforma|casa/],
+    ['saúde', '💊', '#f472b6', /farmacia|remedio|medico|consulta|dentista|exame|plano de saude|academia/],
+    ['lazer', '🎬', '#facc15', /cinema|netflix|spotify|show|viagem|jogo|game|streaming|hotel|passeio|festa/],
+    ['educação', '📚', '#22d3ee', /curso|livro|escola|faculdade|mensalidade|aula|udemy/],
+    ['trabalho', '💼', '#94a3b8', /dominio|hospedagem|vercel|supabase|anuncio|ferramenta|software|assinatura|api\b|servidor|imposto|das\b|mei\b/],
+    ['roupas', '👕', '#e879f9', /roupa|tenis|sapato|camisa|calca|vestido/],
+    ['outros', '📦', '#9ca3af', /./],
+  ];
+  var FIN_REC = [['salário', '💰', '#4ade80', /salario|pagamento|holerite/], ['vendas', '🤝', '#2dd4bf', /venda|vendi|cliente|carro|revenda|comissao/], ['outros', '✨', '#86efac', /./]];
+  var FIN = { tipo: 'gasto', mes: today().slice(0, 7), cat: '', valor: '', desc: '', orcAberto: false };
+  function foldTxt(t) { return String(t || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''); }
+  function finCat(nome, tipo) { var l = tipo === 'receita' ? FIN_REC : FIN_CATS; for (var i = 0; i < l.length; i++) if (l[i][0] === nome) return l[i]; var o = FIN_CATS.concat(FIN_REC); for (var j = 0; j < o.length; j++) if (o[j][0] === nome) return o[j]; return ['outros', '📦', '#9ca3af']; }
+  function adivinhaCat(desc, tipo) { var t = foldTxt(desc); var l = tipo === 'receita' ? FIN_REC : FIN_CATS; for (var i = 0; i < l.length; i++) if (l[i][3].test(t)) return l[i][0]; return 'outros'; }
+  function centavos(v) { var s = String(v || '').replace(/[^\d,.]/g, ''); if (!s) return 0; if (s.indexOf(',') >= 0) s = s.replace(/\./g, '').replace(',', '.'); var n = parseFloat(s); return isFinite(n) && n > 0 ? Math.round(n * 100) : 0; }
+  function reais(c, sinal) { var neg = c < 0; var n = Math.abs(Math.round(c)); var r = String(Math.floor(n / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, '.'); return (neg ? '-' : sinal && c > 0 ? '+' : '') + 'R$ ' + r + ',' + String(n % 100).padStart(2, '0'); }
+  var MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+  function nomeMes(ym) { var p = ym.split('-'); return MESES[+p[1] - 1] + (p[0] !== today().slice(0, 4) ? ' de ' + p[0] : ''); }
+  function mudaMes(d) { var p = FIN.mes.split('-').map(Number); var x = new Date(p[0], p[1] - 1 + d, 1); FIN.mes = x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0'); refreshView(); }
+  function finDados() { var f = S.financas && typeof S.financas === 'object' ? S.financas : {}; return { itens: Array.isArray(f.itens) ? f.itens : [], orcamentos: f.orcamentos && typeof f.orcamentos === 'object' ? f.orcamentos : {}, removidos: Array.isArray(f.removidos) ? f.removidos : [] }; }
+  async function mutateFin(fn) {
+    try {
+      var rows = await sb.db.select('zeno_sync', { key: 'eq.financas', select: 'value' });
+      var v = rows && rows[0] && rows[0].value && typeof rows[0].value === 'object' ? rows[0].value : {};
+      var cur = { itens: Array.isArray(v.itens) ? v.itens.slice() : [], orcamentos: Object.assign({}, v.orcamentos || {}), removidos: Array.isArray(v.removidos) ? v.removidos.slice() : [] };
+      var next = fn(cur);
+      await sb.db.upsert('zeno_sync', { key: 'financas', value: next, device: DEV, updated_at: new Date().toISOString() }, 'user_id,key');
+      S.financas = next; refreshView(); return true;
+    } catch (e) { toast(/row-level|42501/i.test(e.message) ? 'Sua assinatura não está ativa.' : 'Sem internet. Tente de novo.'); return false; }
+  }
+  function viewFin(el) {
+    var f = finDados();
+    var doMes = f.itens.filter(function (i) { return String(i.data).slice(0, 7) === FIN.mes; });
+    var gastos = 0, receitas = 0, porCat = {};
+    doMes.forEach(function (i) { if (i.tipo === 'receita') receitas += i.valor; else { gastos += i.valor; porCat[i.cat || 'outros'] = (porCat[i.cat || 'outros'] || 0) + i.valor; } });
+    var saldo = receitas - gastos;
+    var hojeG = f.itens.filter(function (i) { return i.data === today() && i.tipo !== 'receita'; }).reduce(function (a, i) { return a + i.valor; }, 0);
+    // mês
+    el.append(h('div', { class: 'fin-mes' }, h('button', { class: 'fin-seta', 'aria-label': 'Mês anterior', onclick: function () { mudaMes(-1); } }, '‹'), h('b', { text: nomeMes(FIN.mes) }),
+      h('button', { class: 'fin-seta', 'aria-label': 'Próximo mês', disabled: FIN.mes >= today().slice(0, 7), onclick: function () { mudaMes(1); } }, '›')));
+    // saldo
+    el.append(h('div', { class: 'fin-hero' + (saldo < 0 ? ' neg' : '') },
+      h('span', { class: 'fin-hero-l', text: 'Saldo do mês' }), h('div', { class: 'fin-hero-v', text: reais(saldo) }),
+      h('div', { class: 'fin-hero-row' },
+        h('div', { class: 'fin-mini rec' }, h('i', { text: '↑' }), h('div', {}, h('span', { text: 'Entrou' }), h('b', { text: reais(receitas) }))),
+        h('div', { class: 'fin-mini gas' }, h('i', { text: '↓' }), h('div', {}, h('span', { text: 'Saiu' }), h('b', { text: reais(gastos) })))),
+      FIN.mes === today().slice(0, 7) ? h('div', { class: 'fin-hoje', text: 'Hoje você gastou ' + reais(hojeG) }) : null));
+    // anotar
+    var valor = h('input', { class: 'fin-valor', type: 'text', inputmode: 'decimal', placeholder: '0,00', value: FIN.valor, 'aria-label': 'Valor' });
+    var desc = h('input', { type: 'text', placeholder: FIN.tipo === 'receita' ? 'De onde veio? (ex: venda, salário)' : 'Com o quê? (ex: mercado, uber, luz)', value: FIN.desc, enterkeyhint: 'done', 'aria-label': 'Descrição' });
+    var chips = h('div', { class: 'fin-cats' });
+    function pintaChips() {
+      clear(chips); var sug = FIN.cat || adivinhaCat(desc.value, FIN.tipo);
+      (FIN.tipo === 'receita' ? FIN_REC : FIN_CATS).forEach(function (c) {
+        var b = h('button', { class: 'fin-cat' + (c[0] === sug ? ' on' : ''), onclick: function () { FIN.cat = c[0]; pintaChips(); } }, h('span', { text: c[1] }), c[0]); b.style.setProperty('--cc', c[2]); chips.append(b);
+      });
+    }
+    valor.addEventListener('input', function () { FIN.valor = valor.value; });
+    desc.addEventListener('input', function () { FIN.desc = desc.value; if (!FIN.cat) pintaChips(); });
+    pintaChips();
+    var anotar = async function () {
+      var c = centavos(valor.value); if (!c) { toast('Digite o valor.'); valor.focus(); return; }
+      if (c > 100000000) { toast('Valor grande demais.'); return; }
+      var d = desc.value.trim().slice(0, 80); var tipo = FIN.tipo; var cat = FIN.cat || adivinhaCat(d, tipo);
+      var item = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7), data: today(), tipo: tipo, valor: c, desc: d, cat: cat, criado: Date.now() };
+      FIN.valor = ''; FIN.desc = ''; FIN.cat = '';
+      if (await mutateFin(function (v) { v.itens.push(item); if (v.itens.length > 5000) v.itens.splice(0, v.itens.length - 5000); return v; })) {
+        toast((tipo === 'receita' ? 'Receita' : 'Gasto') + ' anotado ✔');
+        var o = f.orcamentos[cat]; if (tipo === 'gasto' && o) { var tot = (porCat[cat] || 0) + c; if (tot > o) toast('⚠ Passou do limite de ' + cat + ' (' + reais(o) + ')'); }
+      }
+    };
+    desc.addEventListener('keydown', function (e) { if (e.key === 'Enter') anotar(); });
+    el.append(h('div', { class: 'card fin-add' },
+      h('div', { class: 'seg' }, [['gasto', '↓ Gasto'], ['receita', '↑ Receita']].map(function (t) { return h('button', { class: FIN.tipo === t[0] ? 'on ' + t[0] : '', onclick: function () { FIN.tipo = t[0]; FIN.cat = ''; refreshView(); } }, t[1]); })),
+      h('label', { class: 'fin-valor-w' }, h('span', { text: 'R$' }), valor),
+      desc, chips,
+      h('button', { class: 'btn big', onclick: anotar }, FIN.tipo === 'receita' ? 'Anotar receita' : 'Anotar gasto'),
+      h('p', { class: 'hint small', text: 'Dica: no chat ou por voz, diga "gastei 35 no mercado".' })));
+    // para onde foi
+    var cats = Object.keys(porCat).map(function (k) { return [k, porCat[k]]; }).sort(function (a, b) { return b[1] - a[1]; });
+    if (cats.length) {
+      var max = cats[0][1];
+      el.append(h('div', { class: 'sec', text: 'Para onde foi' }), h('div', { class: 'card fin-dist' },
+        h('div', { class: 'fin-stack' }, cats.map(function (c) { var i = h('i'); i.style.flex = String(c[1]); i.style.background = finCat(c[0], 'gasto')[2]; return i; })),
+        cats.map(function (c) {
+          var k = finCat(c[0], 'gasto'); var bar = h('i'); bar.style.width = Math.max(4, c[1] / max * 100) + '%'; bar.style.background = k[2];
+          return h('div', { class: 'fin-catrow' }, h('span', { class: 'fin-ico', text: k[1] }), h('div', { class: 'fin-catinfo' }, h('div', { class: 'fin-catl' }, h('span', { text: c[0] }), h('b', { text: reais(c[1]) })), h('div', { class: 'fin-bar' }, bar)), h('span', { class: 'muted small fin-pct', text: Math.round(c[1] / gastos * 100) + '%' }));
+        })));
+    }
+    // orçamentos
+    var orcs = Object.keys(f.orcamentos).filter(function (k) { return f.orcamentos[k] > 0; });
+    var oc = h('input', { type: 'text', placeholder: 'Categoria (ex: mercado)' }); var ov = h('input', { type: 'text', inputmode: 'decimal', placeholder: 'Limite por mês (ex: 800)' });
+    el.append(h('div', { class: 'sec', text: 'Limites do mês' }), h('div', { class: 'card fin-orc' },
+      orcs.length ? orcs.map(function (k) {
+        var g = porCat[k] || 0; var lim = f.orcamentos[k]; var pct = Math.round(g / lim * 100); var bar = h('i', { class: pct > 100 ? 'bad' : pct >= 80 ? 'warn' : '' }); bar.style.width = Math.min(100, Math.max(3, pct)) + '%';
+        return h('div', { class: 'fin-orcrow' }, h('div', { class: 'fin-catl' }, h('span', {}, finCat(k, 'gasto')[1] + ' ' + k), h('span', { class: 'muted small', text: reais(g) + ' de ' + reais(lim) })), h('div', { class: 'fin-bar' }, bar),
+          h('button', { class: 'x', 'aria-label': 'Tirar limite de ' + k, onclick: function () { mutateFin(function (v) { delete v.orcamentos[k]; return v; }); } }, '✕'));
+      }) : h('p', { class: 'hint', text: 'Defina um limite por categoria e o Zeno avisa quando chegar perto.' }),
+      FIN.orcAberto ? h('div', { class: 'fin-orcform' }, oc, ov, h('button', { class: 'btn', onclick: function () { var k = foldTxt(oc.value).trim(); var c = centavos(ov.value); if (!k || !c) { toast('Diga a categoria e o valor.'); return; } FIN.orcAberto = false; mutateFin(function (v) { v.orcamentos[k] = c; return v; }); } }, 'Salvar limite'))
+        : h('button', { class: 'btn alt', onclick: function () { FIN.orcAberto = true; refreshView(); } }, '+ Novo limite')));
+    // lançamentos
+    el.append(h('div', { class: 'sec', text: 'Lançamentos' }));
+    if (!doMes.length) { el.append(h('p', { class: 'hint', text: S.financas ? 'Nada anotado em ' + nomeMes(FIN.mes) + '.' : 'Ainda não chegou nada do PC. Abra o Zeno no computador (versão 1.12 ou mais nova).' })); return; }
+    var porDia = {}; doMes.forEach(function (i) { (porDia[i.data] = porDia[i.data] || []).push(i); });
+    Object.keys(porDia).sort().reverse().forEach(function (d) {
+      var dt = new Date(d + 'T12:00:00'); var rot = d === today() ? 'Hoje' : dt.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'short' }); rot = rot.charAt(0).toUpperCase() + rot.slice(1);
+      el.append(h('div', { class: 'fin-dia', text: rot }), h('div', { class: 'card fin-lista' }, porDia[d].slice().reverse().map(function (i) {
+        var k = finCat(i.cat, i.tipo); var ic = h('span', { class: 'fin-ico', text: k[1] }); ic.style.setProperty('--cc', k[2]);
+        return h('div', { class: 'fin-item' }, ic, h('div', { class: 't' }, h('b', { text: i.desc || i.cat }), h('div', { class: 'muted small', text: i.cat })),
+          h('b', { class: 'fin-v ' + (i.tipo === 'receita' ? 'rec' : 'gas'), text: (i.tipo === 'receita' ? '+' : '-') + reais(i.valor).replace('-', '') }),
+          h('button', { class: 'x', 'aria-label': 'Apagar', onclick: function () { if (!confirm('Apagar "' + (i.desc || i.cat) + '"?')) return; mutateFin(function (v) { v.itens = v.itens.filter(function (x) { return x.id !== i.id; }); v.removidos.push(i.id); if (v.removidos.length > 3000) v.removidos.splice(0, v.removidos.length - 3000); return v; }); } }, '✕'));
+      })));
+    });
+  }
+
   function viewMore(el) {
     var perm = 'Notification' in window ? Notification.permission : 'unsupported';
     el.append(
+      h('button', { class: 'card linkcard', onclick: function () { go('files'); } }, h('span', { class: 'lc-ic' }, icone('files')), h('div', { class: 't' }, h('b', { text: 'Arquivos' }), h('div', { class: 'muted small', text: 'Mande do celular para o PC e baixe o que o PC mandou.' })), h('span', { class: 'lc-seta', text: '›' })),
       h('div', { class: 'sec', text: 'Alertas do PC' }),
       S.alerts.length ? h('div', {}, S.alerts.slice().reverse().slice(0, 30).map(function (a) {
         return h('div', { class: 'card alertItem' }, h('b', { text: a.title || 'Zeno' }), h('div', { text: a.body || '' }), h('div', { class: 'muted small', text: hhmm(a.at) }));
@@ -1042,7 +1179,7 @@
           perm === 'default' ? h('button', { class: 'btn sm', onclick: enableNotifications }, 'Ativar') : null),
         h('div', { class: 'item' }, h('div', { class: 't' }, 'Conta', h('div', { class: 'muted small', text: (sb.auth.user() || {}).email || '' })),
           h('button', { class: 'btn alt sm', onclick: logout }, 'Sair'))),
-      h('p', { class: 'hint', text: 'Zeno no celular 1.6.0 · O PC precisa estar ligado com o Zeno aberto.' }));
+      h('p', { class: 'hint', text: 'Zeno no celular 1.12 · O PC precisa estar ligado com o Zeno aberto.' }));
   }
   async function enableNotifications() {
     try {
@@ -1143,6 +1280,7 @@
       if (tickN === 1 || tickN % 4 === 0) { await pollPc(); await pullSync(); }
       if (S.tab === 'ctl') await pollPlayer();
       if (S.tab === 'day' && tickN % 2 === 0 && tickN % 4 !== 0) await pullSync();
+      if (S.tab === 'fin' && tickN % 2 === 0 && tickN % 4 !== 0) await pullSync();
       await beat();
       if (tickN === 1 || tickN % 24 === 0) await heartbeat();
       var slot = document.getElementById('offline'); if (slot) slot.remove();
