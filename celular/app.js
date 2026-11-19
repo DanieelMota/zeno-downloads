@@ -322,6 +322,7 @@
   }
   function confirmCard(c) {
     var q = function (allow) { return async function () {
+      if (c.local) { c.resolver(allow); return; } // 1.14: cartão que só existe no celular (apagar/compartilhar arquivo)
       S.confirms = S.confirms.filter(function (x) { return x.id !== c.id; });
       S.answered.push(c.id); LS.set('zeno.answered', S.answered.slice(-60));
       drawChat();
@@ -336,6 +337,67 @@
     var r = await sb.db.insert('zeno_commands', { from_device: DEV, kind: kind, payload: p });
     return Array.isArray(r) ? r[0] : r;
   }
+  // ---------- 1.14: app Android do Zeno (casca com plugins nativos): o PC pede contatos e arquivos do aparelho ----------
+  // No navegador/iPhone nada disso existe (NATIVO = false). Os pedidos chegam como evento 'rpc' e a resposta volta como comando 'rpc_result'.
+  // Ler é livre; apagar e compartilhar SEMPRE pedem Permitir/Negar na tela do celular.
+  var CAP = window.Capacitor;
+  var NATIVO = !!(CAP && typeof CAP.isNativePlatform === 'function' && CAP.isNativePlatform());
+  function plug(n) { return NATIVO && CAP.Plugins ? CAP.Plugins[n] : null; }
+  function fmtTam(b) { return b < 1024 ? b + ' B' : b < 1048576 ? (b / 1024).toFixed(0) + ' KB' : (b / 1048576).toFixed(1) + ' MB'; }
+  function fmtData(ms) { return new Date(ms).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }); }
+  function itemArq(i) { return { caminho: i.caminho, nome: i.nome, tipo: i.pasta ? 'pasta' : 'arquivo', tamanho: i.pasta ? null : fmtTam(i.tamanho), modificado: fmtData(i.modificado) }; }
+  // cartão Permitir/Negar que só existe no celular; resolve true/false (sem resposta em 90 s = negado)
+  function confirmarLocal(titulo, corpo) {
+    return new Promise(function (resolve) {
+      var c = { id: 'loc' + Date.now(), title: titulo, body: corpo, at: Date.now(), local: true };
+      var feito = false;
+      var fim = function (v) { if (feito) return; feito = true; S.confirms = S.confirms.filter(function (x) { return x.id !== c.id; }); drawChat(); resolve(v); };
+      c.resolver = fim;
+      setTimeout(function () { fim(false); }, 90000);
+      S.confirms.push(c);
+      if (S.tab !== 'chat') go('chat');
+      drawChat(); updateTabs();
+      try { if (navigator.vibrate) navigator.vibrate(120); } catch (_) { /* sem vibração */ }
+    });
+  }
+  async function opNativa(op, a) {
+    if (op === 'contatos') {
+      var C = plug('ZenoContatos');
+      if (!C) return { erro: 'Contatos indisponíveis neste app.' };
+      var q = String(a.nome || '').trim().slice(0, 60);
+      if (!q) return { erro: 'Diga o nome do contato.' };
+      var rc = await C.buscar({ nome: q });
+      return { contatos: rc.contatos || [] };
+    }
+    var F = plug('ZenoArquivos');
+    if (!F) return { erro: 'O acesso a arquivos não está instalado neste app.' };
+    var est = await F.estado();
+    if (!est.androidOk) return { erro: 'O acesso a todos os arquivos precisa de Android 11 ou mais novo.' };
+    if (!est.acesso) { await F.pedirAcesso(); return { erro: 'Falta liberar o acesso a todos os arquivos. Abri a tela do Android: ligue a chave do Zeno e volte ao app. Depois é só pedir de novo.' }; }
+    var cam = String(a.caminho || '').slice(0, 400);
+    if (op === 'arq_listar') { var l = await F.listar({ pasta: String(a.pasta || '').slice(0, 400), max: Number(a.max) || 30 }); return { pasta: l.pasta, total: l.total, itens: (l.itens || []).map(itemArq) }; }
+    if (op === 'arq_buscar') { var b = await F.buscar({ nome: String(a.nome || '').slice(0, 100), pasta: String(a.pasta || '').slice(0, 400), max: Number(a.max) || 20 }); return { encontrados: b.encontrados, busca_incompleta: b.busca_incompleta, itens: (b.itens || []).map(itemArq) }; }
+    if (op === 'arq_ler') { var r = await F.ler({ caminho: cam }); return { caminho: r.caminho, texto: String(r.texto || '').slice(0, 6000), cortado: !!r.cortado }; }
+    if (op === 'arq_apagar' || op === 'arq_compartilhar') {
+      var i = await F.info({ caminho: cam });
+      if (i.pasta) return { erro: 'Só posso mexer em arquivos, um por vez, não em pastas.' };
+      var apagar = op === 'arq_apagar';
+      var ok = await confirmarLocal(apagar ? 'Mover para a lixeira do Zeno' : 'Compartilhar este arquivo',
+        i.caminho + '\n' + fmtTam(i.tamanho) + ' · modificado em ' + fmtData(i.modificado) + (apagar ? '\nVai para uma pasta oculta; dá para recuperar.' : '\nVocê escolhe o app e toca em enviar.'));
+      if (!ok) return { cancelado: true, aviso: 'O usuário negou ou não respondeu. Nada foi feito.' };
+      if (apagar) { await F.lixeira({ caminho: i.caminho }); return { ok: true, aviso: 'Movido para a lixeira do Zeno (pasta oculta .Zeno_lixeira).' }; }
+      await F.compartilhar({ caminho: i.caminho });
+      return { ok: true, aviso: 'Abri a lista de apps para compartilhar. O usuário escolhe o app e toca em enviar.' };
+    }
+    return { erro: 'Pedido desconhecido.' };
+  }
+  async function atenderRpc(d) {
+    var res;
+    try { res = await opNativa(String(d.op || ''), d.args && typeof d.args === 'object' ? d.args : {}); }
+    catch (e) { res = { erro: String((e && e.message) || e).slice(0, 200) }; }
+    try { await cmd('rpc_result', { id: d.id, result: res }, { ttl: 120 }); } catch (_) { /* sem internet: o PC desiste sozinho */ }
+  }
+
   async function submit(text, viaVoice) {
     text = String(text != null ? text : composerTa.value).trim();
     if (!text) return;
@@ -346,7 +408,7 @@
     pushMsg(wait);
     botMood('thinking');
     try {
-      var extra = {};
+      var extra = NATIVO ? { nativo: true } : {};
       if (S.loc && PEDE_LUGAR.test(text)) { var pos = await posicao(); if (pos) extra.loc = pos; }
       var c = await cmd('ask', Object.assign({ text: text.slice(0, 2000) }, extra));
       pend[c.id] = { mode: 'chat', waitId: wait.id, voice: !!viaVoice };
@@ -363,7 +425,24 @@
   // ---------- voz ----------
   var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   var rec = null;
+  // 1.14: no app Android o navegador embutido não tem ditado: usa o reconhecimento de fala do Android (plugin)
+  async function micNativo() {
+    var SP = plug('SpeechRecognition'); var W = plug('ZenoWakeNativo');
+    var fim = function () { S.listening = false; micBtn.classList.remove('rec'); micBtn.textContent = '🎤'; botMood(S.pcOnline ? 'idle' : 'sleeping'); if (W) { try { W.retomar(); } catch (_) { /* sem Ei Zeno */ } } };
+    if (S.listening) { try { await SP.stop(); } catch (_) { /* já parou */ } return; }
+    try {
+      var perm = await SP.requestPermissions();
+      if (perm && perm.speechRecognition === 'denied') { toast('Libere o microfone para o Zeno nos ajustes do Android.'); return; }
+      if (W) { try { await W.pausar(); } catch (_) { /* sem Ei Zeno */ } }
+      S.listening = true; micBtn.classList.add('rec'); micBtn.textContent = '⏹'; botMood('listening'); go('chat');
+      var r = await SP.start({ language: 'pt-BR', maxResults: 1, partialResults: false, popup: false });
+      fim();
+      var t = r && r.matches && r.matches[0] ? String(r.matches[0]).trim() : '';
+      if (t) submit(t, true);
+    } catch (e) { fim(); toast('Não consegui ouvir. Tente de novo.'); }
+  }
   function toggleMic() {
+    if (NATIVO && plug('SpeechRecognition')) { micNativo(); return; }
     if (!SR) { toast('Este navegador não tem ditado aqui. Use o 🎤 do teclado.'); composerTa.focus(); return; }
     if (S.listening && rec) { rec.stop(); return; }
     try {
@@ -1221,6 +1300,33 @@
             if (S.loc) { var p = await posicao(); if (!p) toast('Libere a localização para este app nos ajustes do celular.'); }
             refreshView();
           } }, S.loc ? 'Ligado' : 'Desligado')),
+        NATIVO && plug('ZenoBiometria') ? h('div', { class: 'item' }, h('div', { class: 't' }, 'Bloquear o app com a digital', h('div', { class: 'muted small', text: 'Pede a digital ao abrir e depois de 30 segundos fora do app.' })),
+          h('button', { class: 'btn sm' + (LS.get('zeno.bio', false) ? '' : ' alt'), onclick: async function () {
+            var B = plug('ZenoBiometria');
+            try {
+              if (LS.get('zeno.bio', false)) { await B.apagar(); LS.set('zeno.bio', false); }
+              else {
+                var est = await B.estado();
+                if (!est.disponivel) { toast(est.cadastrada === false ? 'Cadastre uma digital nos ajustes do Android primeiro.' : 'Este celular não tem digital disponível.'); return; }
+                await B.salvar({ segredo: uuid() }); LS.set('zeno.bio', true);
+              }
+            } catch (e) { toast('Não consegui mudar a digital.'); }
+            refreshView();
+          } }, LS.get('zeno.bio', false) ? 'Ligado' : 'Desligado')) : null,
+        NATIVO && plug('ZenoWakeNativo') ? h('div', { class: 'item' }, h('div', { class: 't' }, 'Chamar pelo nome (“Ei Zeno”)', h('div', { class: 'muted small', id: 'wakeInfo', text: 'Escuta em segundo plano, só dentro do celular. Toque em Ligar para ver o estado.' })),
+          h('button', { class: 'btn sm alt', onclick: async function () {
+            var W = plug('ZenoWakeNativo'); var info = document.getElementById('wakeInfo');
+            try {
+              var e0 = await W.estado();
+              if (!e0.modelo) { if (info) info.textContent = 'Ainda falta o modelo de voz “Ei Zeno” no app. Veja android/README.md.'; return; }
+              if (e0.ligado) { await W.desligar(); if (info) info.textContent = 'Desligado.'; return; }
+              var perm = await plug('SpeechRecognition').requestPermissions();
+              if (perm && perm.speechRecognition === 'denied') { if (info) info.textContent = 'Libere o microfone nos ajustes do Android.'; return; }
+              await W.ligar();
+              if (!e0.sobreposicao) { try { await W.abrirSobreposicao(); } catch (_) { /* opcional */ } }
+              if (info) info.textContent = 'Ligado: diga “Ei Zeno”. Para o Android não fechar o Zeno, deixe a bateria sem restrição.';
+            } catch (e) { if (info) info.textContent = 'Não consegui: ' + String((e && e.message) || e).slice(0, 80); }
+          } }, 'Ligar / desligar')) : null,
         h('div', { class: 'item' }, h('div', { class: 't' }, 'Notificações', h('div', { class: 'muted small', text: perm === 'granted' ? 'Ativadas.' : perm === 'denied' ? 'Bloqueadas nos ajustes do iPhone.' : perm === 'unsupported' ? 'No iPhone, primeiro use Compartilhar > Adicionar à Tela de Início.' : 'Avisa mesmo com o app fechado.' })),
           perm === 'default' ? h('button', { class: 'btn sm', onclick: enableNotifications }, 'Ativar') : null),
         h('div', { class: 'item' }, h('div', { class: 't' }, 'Conta', h('div', { class: 'muted small', text: (sb.auth.user() || {}).email || '' })),
@@ -1284,6 +1390,9 @@
       if (S.tab !== 'chat') S.unread++;
       drawChat(); updateTabs(); notifyOS('Zeno pede permissão', ev.title || '');
       try { if (navigator.vibrate) navigator.vibrate(120); } catch (_) { /* sem vibração */ }
+    } else if (ev.kind === 'rpc') {
+      if (!NATIVO || initial || age > 120000 || (d.to && d.to !== DEV) || !d.id) return;
+      atenderRpc(d);
     } else if (ev.kind === 'file') {
       if (S.inbox.some(function (f) { return f.path === d.path; })) return;
       var f = { path: d.path, name: d.name || ev.title || 'arquivo', size: d.size || 0, mime: d.mime || '', at: Date.parse(ev.created_at) };
@@ -1347,9 +1456,35 @@
     S.since = null; tickN = 0;
     buildShell(); updateTop();
     running = true; loop();
+    bloquear();
+    if (window.__pedido) { window.__pedido = null; chamado(); }
     if (typeof Notification !== 'undefined' && Notification.permission === 'granted') subscribePush().catch(function () { /* sem push */ });
   }
   document.addEventListener('visibilitychange', function () { if (running) beat(); if (document.visibilityState === 'visible' && running) { clearTimeout(loopT); loop(); } });
+
+  // ---------- 1.14: app Android: bloqueio por digital e chamada por gesto/“Ei Zeno” ----------
+  var hiddenAt = 0;
+  function bloquear() {
+    var B = plug('ZenoBiometria');
+    if (!NATIVO || !B || !LS.get('zeno.bio', false) || document.getElementById('bloqueio')) return;
+    var btn = h('button', { class: 'btn', onclick: tentar }, 'Desbloquear com a digital');
+    var box = h('div', { class: 'lock', id: 'bloqueio' }, mascotEl('big', 'sleeping'), h('h2', { text: 'Zeno bloqueado' }), btn);
+    document.body.append(box);
+    async function tentar() {
+      try { await B.entrar(); box.remove(); } catch (e) {
+        var m = String((e && e.message) || e);
+        if (/INVALIDADA|NADA_SALVO/.test(m)) { LS.set('zeno.bio', false); box.remove(); toast('A digital mudou no celular. Ligue o bloqueio de novo nos Ajustes.'); }
+      }
+    }
+    setTimeout(tentar, 250);
+  }
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden') hiddenAt = Date.now();
+    else if (hiddenAt && Date.now() - hiddenAt > 30000) bloquear();
+  });
+  // gesto de assistente do Android (segurar o botão home) ou “Ei Zeno”: abre já ouvindo
+  function chamado() { if (!running) return; go('chat'); setTimeout(function () { if (!S.listening) toggleMic(); }, 350); }
+  window.addEventListener('zenoFalar', chamado);
 
   // ---------- início ----------
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(function () { /* sem cache offline */ });
