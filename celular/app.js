@@ -182,7 +182,12 @@
     ctl: 'M3.5 7.5A2.5 2.5 0 0 1 6 5h12a2.5 2.5 0 0 1 2.5 2.5v6A2.5 2.5 0 0 1 18 16H6a2.5 2.5 0 0 1-2.5-2.5zM9 20h6M12 16v4',
     more: 'M5 12h.01M12 12h.01M19 12h.01',
     files: 'M6 3.5h8.5L19 8v11a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 19V5a1.5 1.5 0 0 1 1-1.5zM14 3.5V8h5',
+    mic: 'M9 6a3 3 0 0 1 6 0v5a3 3 0 0 1-6 0zM5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21',
+    send: 'M12 19V5M6 11l6-6 6 6',
   };
+  // 1.16.2: o botão de falar é um microfone de linha; ouvindo, vira tracinhos vermelhos que se mexem
+  function tracos() { var s = h('span', { class: 'tracos', 'aria-hidden': 'true' }); for (var i = 0; i < 8; i++) s.append(h('i')); return s; }
+  function micIcone(ouvindo) { document.body.classList.toggle('zeno-ouve', !!ouvindo); micBtn.textContent = ''; micBtn.append(ouvindo ? tracos() : icone('mic')); micBtn.setAttribute('aria-label', ouvindo ? 'Parar de ouvir' : 'Falar'); }
   function icone(id) {
     var NS = 'http://www.w3.org/2000/svg'; var s = document.createElementNS(NS, 'svg'); s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('aria-hidden', 'true'); s.setAttribute('class', 'ic');
     var p = document.createElementNS(NS, 'path'); p.setAttribute('d', ICONES[id] || ICONES.more); s.append(p); return s;
@@ -199,7 +204,7 @@
     MASC.top = mascotEl('logo', 'idle');
     MASC.top.addEventListener('click', function () { botMood(['love', 'laugh', 'cool', 'surprised'][Math.floor(Math.random() * 4)], 1800); });
     var hora = new Date().getHours(); var oi = hora < 5 ? 'Boa noite' : hora < 12 ? 'Bom dia' : hora < 18 ? 'Boa tarde' : 'Boa noite';
-    app.append(h('div', { class: 'top' }, MASC.top, h('div', { class: 'top-t' }, h('span', { class: 'top-sub', id: 'topSub', text: oi + ' 👋' }), h('h1', { id: 'topTitulo', text: 'Zeno' })), topPill), h('div', { id: 'bannerSlot' }), views, tabsEl);
+    app.append(h('div', { class: 'top' }, MASC.top, h('div', { class: 'top-t' }, h('span', { class: 'top-sub', id: 'topSub', text: oi + ' 👋' }), h('h1', { id: 'topTitulo', text: 'Zeno' })), h('span', { class: 'voz-top' }, tracos()), topPill), h('div', { id: 'bannerSlot' }), views, tabsEl);
     buildChat();
     go(S.tab);
   }
@@ -249,9 +254,9 @@
     composerTa = h('textarea', { rows: '1', placeholder: 'Fale com o Zeno…', enterkeyhint: 'send' });
     composerTa.addEventListener('input', function () { composerTa.style.height = 'auto'; composerTa.style.height = Math.min(120, composerTa.scrollHeight) + 'px'; });
     composerTa.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } });
-    micBtn = h('button', { class: 'round mic', 'aria-label': 'Falar', onclick: toggleMic }, '🎤'); // o visual 1.16 pinta o botão como orbe
+    micBtn = h('button', { class: 'round mic', 'aria-label': 'Falar', onclick: toggleMic }, icone('mic'));
     chatBox = h('div', { class: 'view chat', hidden: true }, list,
-      h('div', { class: 'composer' }, micBtn, composerTa, h('button', { class: 'round', 'aria-label': 'Enviar', onclick: function () { submit(); } }, '➤')));
+      h('div', { class: 'composer' }, micBtn, composerTa, h('button', { class: 'round send', 'aria-label': 'Enviar', onclick: function () { submit(); } }, icone('send'))));
     views.append(chatBox);
     drawChat();
   }
@@ -429,13 +434,13 @@
   // 1.14: no app Android o navegador embutido não tem ditado: usa o reconhecimento de fala do Android (plugin)
   async function micNativo() {
     var SP = plug('SpeechRecognition'); var W = plug('ZenoWakeNativo');
-    var fim = function () { S.listening = false; micBtn.classList.remove('rec'); micBtn.textContent = '🎤'; botMood(S.pcOnline ? 'idle' : 'sleeping'); if (W) { try { W.retomar(); } catch (_) { /* sem Ei Zeno */ } } };
+    var fim = function () { S.listening = false; micBtn.classList.remove('rec'); micIcone(false); botMood(S.pcOnline ? 'idle' : 'sleeping'); if (W) { try { W.retomar(); } catch (_) { /* sem Ei Zeno */ } } };
     if (S.listening) { try { await SP.stop(); } catch (_) { /* já parou */ } return; }
     try {
       var perm = await SP.requestPermissions();
       if (perm && perm.speechRecognition === 'denied') { toast('Libere o microfone para o Zeno nos ajustes do Android.'); return; }
       if (W) { try { await W.pausar(); } catch (_) { /* sem Ei Zeno */ } }
-      S.listening = true; micBtn.classList.add('rec'); micBtn.textContent = '⏹'; botMood('listening'); go('chat');
+      S.listening = true; micBtn.classList.add('rec'); micIcone(true); botMood('listening'); go('chat');
       var r = await SP.start({ language: 'pt-BR', maxResults: 1, partialResults: false, popup: false });
       fim();
       var t = r && r.matches && r.matches[0] ? String(r.matches[0]).trim() : '';
@@ -457,18 +462,24 @@
       };
       rec.onerror = function (ev) { toast(ev.error === 'not-allowed' ? 'Libere o microfone nos ajustes do Safari para falar.' : 'Não consegui ouvir (' + ev.error + ').'); };
       rec.onend = function () {
-        S.listening = false; micBtn.classList.remove('rec'); micBtn.textContent = '🎤'; botMood(S.pcOnline ? 'idle' : 'sleeping');
+        S.listening = false; micBtn.classList.remove('rec'); micIcone(false); botMood(S.pcOnline ? 'idle' : 'sleeping');
         var t = (finalText || composerTa.value).trim();
         if (t) submit(t, true);
       };
       rec.start();
-      S.listening = true; micBtn.classList.add('rec'); micBtn.textContent = '⏹'; botMood('listening');
+      S.listening = true; micBtn.classList.add('rec'); micIcone(true); botMood('listening');
       go('chat');
     } catch (e) { toast('Não consegui abrir o microfone.'); }
   }
   function speakText(text, force) {
     if (!(S.speak || force) || !('speechSynthesis' in window)) return;
-    try { speechSynthesis.cancel(); var u = new SpeechSynthesisUtterance(semMarcas(text).slice(0, 600)); u.lang = 'pt-BR'; speechSynthesis.speak(u); } catch (_) { /* sem voz */ }
+    try {
+      speechSynthesis.cancel(); var u = new SpeechSynthesisUtterance(semMarcas(text).slice(0, 600)); u.lang = 'pt-BR';
+      // 1.16.2: enquanto o Zeno fala, tracinhos verdes no topo
+      var fimFala = function () { document.body.classList.remove('zeno-fala'); };
+      u.onstart = function () { document.body.classList.add('zeno-fala'); }; u.onend = fimFala; u.onerror = fimFala;
+      speechSynthesis.speak(u);
+    } catch (_) { /* sem voz */ }
   }
 
   // ---------- controle ----------
