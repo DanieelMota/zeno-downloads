@@ -123,7 +123,9 @@
       return false;
     }
   }
-  function renderLogin(msg, kind) {
+  // 1.16.4: o jeito principal é o código de 6 números que chega no e-mail (renderLogin). Este é o antigo (e-mail + código do pedido),
+  // que continua escondido atrás de um link enquanto os dois funcionam.
+  function renderLoginPedido(msg, kind) {
     clear(app);
     var email = h('input', { type: 'email', placeholder: 'e-mail da compra', autocomplete: 'email', autocapitalize: 'off', value: LS.get('zeno.email', '') });
     var pedido = h('input', { type: 'text', placeholder: 'código do pedido (ex.: ZENO-…)', autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false' });
@@ -145,7 +147,75 @@
       h('p', { text: 'Entre com o e-mail da compra e o código do pedido. Eles aparecem no Zeno do computador, em Ajustes › Celular.' }),
       email, pedido, note,
       h('div', { class: 'row' }, botao),
+      h('button', { class: 'btn alt', onclick: function () { renderLogin(); } }, 'Receber um código por e-mail'),
       dicaInstalar()));
+  }
+
+  async function chamarConta(rota, corpo) {
+    var r = await fetch(CFG.conta + rota, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(corpo) });
+    var j = await r.json().catch(function () { return {}; });
+    if (!j.ok) { var err = new Error(j.mensagem || 'Não consegui agora. Tente de novo.'); err.codigo = j.codigo || ''; throw err; }
+    return j;
+  }
+  function msgRede(err) { return /Failed to fetch|NetworkError/i.test(err.message) ? 'Sem internet. Confira a conexão e tente de novo.' : err.message; }
+  // passo 1: o e-mail da compra
+  function renderLogin(msg, kind) {
+    clear(app);
+    var email = h('input', { type: 'email', placeholder: 'e-mail da compra', autocomplete: 'email', autocapitalize: 'off', value: LS.get('zeno.email', '') });
+    var note = h('p', { class: 'hint ' + (kind || '') }, msg || '');
+    var botao = h('button', { class: 'btn', onclick: function () { go(); } }, 'Enviar código');
+    var go = async function () {
+      var e = email.value.trim();
+      if (!e) { note.textContent = 'Digite o e-mail da compra.'; note.className = 'hint err'; return; }
+      note.textContent = 'Enviando…'; note.className = 'hint'; botao.disabled = true;
+      try { LS.set('zeno.email', e); await chamarConta('/codigo', { email: e }); renderCodigo(e); }
+      catch (err) { note.textContent = msgRede(err); note.className = 'hint err'; botao.disabled = false; }
+    };
+    email.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') go(); });
+    app.append(h('div', { class: 'login' },
+      mascotEl('big', 'happy'), h('h1', { text: 'Zeno' }),
+      h('p', { text: 'Digite o e-mail da compra. Vamos mandar um código de 6 números para ele.' }),
+      email, note,
+      h('div', { class: 'row' }, botao),
+      h('button', { class: 'btn alt', onclick: function () { renderLoginPedido(); } }, 'Tenho o código do pedido'),
+      dicaInstalar()));
+  }
+  // passo 2: o código que chegou no e-mail
+  function renderCodigo(e, msg, kind) {
+    clear(app);
+    var codigo = h('input', { type: 'text', inputmode: 'numeric', maxlength: 7, placeholder: '000000', autocomplete: 'one-time-code', 'aria-label': 'código de 6 números' });
+    var note = h('p', { class: 'hint ' + (kind || '') }, msg || '');
+    var botao = h('button', { class: 'btn', onclick: function () { go(); } }, 'Entrar');
+    var de = 60; var mais = h('button', { class: 'btn alt', disabled: true }, 'Mandar de novo (60)');
+    var t = setInterval(function () {
+      if (!mais.isConnected) { clearInterval(t); return; }
+      de--; if (de > 0) { mais.textContent = 'Mandar de novo (' + de + ')'; return; }
+      clearInterval(t); mais.disabled = false; mais.textContent = 'Mandar de novo';
+    }, 1000);
+    mais.onclick = async function () {
+      mais.disabled = true;
+      try { await chamarConta('/codigo', { email: e }); note.textContent = 'Mandamos outro código. Use o último que chegou.'; note.className = 'hint'; }
+      catch (err) { note.textContent = msgRede(err); note.className = 'hint err'; }
+    };
+    var go = async function () {
+      var c = codigo.value.replace(/\D/g, '');
+      if (c.length !== 6) { note.textContent = 'O código tem 6 números.'; note.className = 'hint err'; return; }
+      note.textContent = 'Entrando…'; note.className = 'hint'; botao.disabled = true;
+      try {
+        var j = await chamarConta('/entrar', { email: e, codigo: c });
+        sb.auth.setSession(j.sessao);
+        LS.set('zeno.conta', { e: e }); // sem código do pedido guardado: a sessão se renova sozinha
+        start();
+      } catch (err) { note.textContent = msgRede(err); note.className = 'hint err'; botao.disabled = false; }
+    };
+    codigo.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') go(); });
+    app.append(h('div', { class: 'login' },
+      mascotEl('big', 'happy'), h('h1', { text: 'Zeno' }),
+      h('p', { text: 'Mandamos um código de 6 números para ' + e + '. Olhe também a caixa de spam.' }),
+      codigo, note,
+      h('div', { class: 'row' }, botao, mais),
+      h('button', { class: 'btn alt', onclick: function () { renderLogin(); } }, 'Trocar o e-mail')));
+    setTimeout(function () { try { codigo.focus(); } catch (_) { /* opcional */ } }, 50);
   }
 
   // 1.6: volta do Google. O endereço do app (sem ?code) precisa estar nas Redirect URLs do Supabase.
