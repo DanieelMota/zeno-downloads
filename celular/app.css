@@ -416,3 +416,7 @@ input:focus, textarea:focus, select:focus { border-color: rgba(167, 139, 250, .7
 .fin-v { font-variant-numeric: tabular-nums; font-size: 15px; } .fin-v.rec { color: var(--ok); } .fin-v.gas { color: var(--txt); }
 .fin-item .x { font-size: 15px; opacity: .55; }
 @media (prefers-reduced-motion: reduce) { .fin-bar i { transition: none; } }
+
+/* 1.14: botões prontos no fim da resposta (ligar, SMS, WhatsApp, música, mapas) */
+.bub .acoes { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.bub .acoes a.btn { text-decoration: none; display: inline-flex; align-items: center; }

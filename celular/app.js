@@ -68,7 +68,7 @@
   var S = {
     tab: 'chat', pcOnline: false, pcSeen: 0, msgs: LS.get('zeno.msgs', []), alerts: LS.get('zeno.alerts', []), inbox: LS.get('zeno.inbox', []),
     tasks: [], memory: [], routines: [], shortcuts: [], notes: [], waiting: [], projects: [], painel: [], listTab: 'tasks', confirms: [], answered: LS.get('zeno.answered', []),
-    speak: LS.get('zeno.speak', false), since: null, unread: 0, listening: false, busy: 0,
+    speak: LS.get('zeno.speak', false), loc: LS.get('zeno.loc', false), since: null, unread: 0, listening: false, busy: 0,
   };
   var pend = {}; // id do pedido -> como mostrar a resposta
   var seenSync = {}; // chave -> updated_at já aplicado
@@ -270,11 +270,49 @@
     var el = h('div', { class: 'bub ' + m.who + (m.wait ? ' wait' : ''), 'data-id': m.id || '' });
     if (m.wait) el.append(h('span', { class: 'dots' }, h('span'), h('span'), h('span')));
     else el.textContent = m.text;
+    if (m.who === 'bot' && !m.wait && Array.isArray(m.acoes) && m.acoes.length) {
+      var box = h('div', { class: 'acoes' });
+      m.acoes.forEach(function (a) {
+        if (!ACOES_OK.test(a.url)) return;
+        var b = h('a', { class: 'btn sm acao', href: a.url, rel: 'noopener noreferrer', target: /^https/.test(a.url) ? '_blank' : null }, a.rotulo || 'Abrir');
+        b.addEventListener('click', function (ev) { ev.stopPropagation(); });
+        box.append(b);
+      });
+      el.append(box);
+    }
     if (m.who === 'bot' && !m.wait) el.addEventListener('click', function () { speakText(m.text, true); });
     return el;
   }
   function scrollChat() { var l = document.getElementById('msgs'); if (l) requestAnimationFrame(function () { l.scrollTop = l.scrollHeight; }); }
+  // 1.14: botões prontos que o PC deixa no fim da resposta (⟦link|rótulo⟧): ligar, SMS, WhatsApp, YouTube, Spotify, Mapas.
+  // Só os tipos desta lista viram botão; qualquer outra coisa é ignorada.
+  var ACOES_OK = /^(tel:[+\d*#]{3,20}|sms:[+\d]{3,20}(\?body=[^\s⟦⟧|]{0,1500})?|https:\/\/wa\.me\/\d{10,15}(\?text=[^\s⟦⟧|]{0,1500})?|whatsapp:\/\/send\?[^\s⟦⟧|]{1,1600}|https:\/\/(www\.|m\.|music\.)?youtube\.com\/[^\s⟦⟧|]{0,300}|https:\/\/youtu\.be\/[^\s⟦⟧|]{1,100}|https:\/\/open\.spotify\.com\/[^\s⟦⟧|]{0,300}|spotify:[a-z]+:[A-Za-z0-9]{1,40}|https:\/\/(www\.)?google\.com\/maps\/[^\s⟦⟧|]{0,400}|geo:[-\d.,]{3,40}(\?q=[^\s⟦⟧|]{0,200})?|tg:\/\/resolve\?domain=[A-Za-z0-9_]{3,40}|instagram:\/\/app)$/;
+  function separaAcoes(text) {
+    var acoes = [];
+    var limpo = String(text == null ? '' : text).replace(/⟦([^|⟧]*)\|([^⟧]*)⟧/g, function (_m, url, rotulo) {
+      if (ACOES_OK.test(url) && acoes.length < 4) acoes.push({ url: url, rotulo: String(rotulo).slice(0, 60) || 'Abrir' });
+      return '';
+    }).replace(/⟦[^⟧]*⟧/g, '').replace(/\n{3,}/g, '\n\n').trim();
+    return { texto: limpo, acoes: acoes };
+  }
+  function semMarcas(text) { return separaAcoes(text).texto; }
+
+  // 1.14: onde o celular está (só se o usuário ligou "Compartilhar localização"; vai junto do pedido quando a pergunta é sobre lugar)
+  var PEDE_LUGAR = /\b(onde|perto|aqui|daqui|rota|caminho|chegar|transito|trânsito|clima|tempo|estou|pertinho|proximo|próximo)\b/i;
+  function posicao() {
+    return new Promise(function (resolve) {
+      if (!navigator.geolocation) return resolve(null);
+      var feito = false;
+      var fim = function (v) { if (!feito) { feito = true; resolve(v); } };
+      setTimeout(function () { fim(null); }, 7000);
+      try {
+        navigator.geolocation.getCurrentPosition(function (p) { fim({ lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy }); }, function () { fim(null); }, { enableHighAccuracy: false, maximumAge: 120000, timeout: 6000 });
+      } catch (_) { fim(null); }
+    });
+  }
+
   function pushMsg(m) {
+    if (m.who === 'bot' && !m.wait && m.text && m.text.indexOf('⟦') >= 0) { var sp = separaAcoes(m.text); m.text = sp.texto; m.acoes = sp.acoes; }
     m.at = Date.now();
     S.msgs.push(m);
     if (S.msgs.length > 80) S.msgs.shift();
@@ -308,7 +346,9 @@
     pushMsg(wait);
     botMood('thinking');
     try {
-      var c = await cmd('ask', { text: text.slice(0, 2000) });
+      var extra = {};
+      if (S.loc && PEDE_LUGAR.test(text)) { var pos = await posicao(); if (pos) extra.loc = pos; }
+      var c = await cmd('ask', Object.assign({ text: text.slice(0, 2000) }, extra));
       pend[c.id] = { mode: 'chat', waitId: wait.id, voice: !!viaVoice };
       if (!S.pcOnline) pushSys('O PC está desligado. Guardei o pedido: ele responde quando ligar (vale por 1 hora).');
     } catch (e) {
@@ -348,7 +388,7 @@
   }
   function speakText(text, force) {
     if (!(S.speak || force) || !('speechSynthesis' in window)) return;
-    try { speechSynthesis.cancel(); var u = new SpeechSynthesisUtterance(String(text).slice(0, 600)); u.lang = 'pt-BR'; speechSynthesis.speak(u); } catch (_) { /* sem voz */ }
+    try { speechSynthesis.cancel(); var u = new SpeechSynthesisUtterance(semMarcas(text).slice(0, 600)); u.lang = 'pt-BR'; speechSynthesis.speak(u); } catch (_) { /* sem voz */ }
   }
 
   // ---------- controle ----------
@@ -1175,6 +1215,12 @@
       h('div', { class: 'card' },
         h('div', { class: 'item' }, h('div', { class: 't' }, 'Zeno fala as respostas', h('div', { class: 'muted small', text: 'Sempre que responder. Por voz, ele já fala sozinho. Toque numa resposta para ouvir.' })),
           h('button', { class: 'btn sm' + (S.speak ? '' : ' alt'), onclick: function () { S.speak = !S.speak; LS.set('zeno.speak', S.speak); refreshView(); } }, S.speak ? 'Ligado' : 'Desligado')),
+        h('div', { class: 'item' }, h('div', { class: 't' }, 'Compartilhar minha localização', h('div', { class: 'muted small', text: 'Só quando você pergunta de lugar ("onde estou", "perto de mim", rota). Vai direto para o seu PC.' })),
+          h('button', { class: 'btn sm' + (S.loc ? '' : ' alt'), onclick: async function () {
+            S.loc = !S.loc; LS.set('zeno.loc', S.loc);
+            if (S.loc) { var p = await posicao(); if (!p) toast('Libere a localização para este app nos ajustes do celular.'); }
+            refreshView();
+          } }, S.loc ? 'Ligado' : 'Desligado')),
         h('div', { class: 'item' }, h('div', { class: 't' }, 'Notificações', h('div', { class: 'muted small', text: perm === 'granted' ? 'Ativadas.' : perm === 'denied' ? 'Bloqueadas nos ajustes do iPhone.' : perm === 'unsupported' ? 'No iPhone, primeiro use Compartilhar > Adicionar à Tela de Início.' : 'Avisa mesmo com o app fechado.' })),
           perm === 'default' ? h('button', { class: 'btn sm', onclick: enableNotifications }, 'Ativar') : null),
         h('div', { class: 'item' }, h('div', { class: 't' }, 'Conta', h('div', { class: 'muted small', text: (sb.auth.user() || {}).email || '' })),
@@ -1220,9 +1266,9 @@
       if (p) {
         delete pend[d.command];
         if (p.mode === 'chat') { dropWait(p.waitId); botMood('success', 2600); pushMsg({ who: 'bot', text: ev.body || '(sem resposta)' }); if (p.voice || S.speak) speakText(ev.body); }
-        else if (p.mode === 'quiet') { if (d.ok === false) toast((ev.body || '').slice(0, 140)); return; }
-        else toast((ev.body || '').slice(0, 140));
-        notifyOS('Zeno', ev.body || '');
+        else if (p.mode === 'quiet') { if (d.ok === false) toast(semMarcas(ev.body || '').slice(0, 140)); return; }
+        else toast(semMarcas(ev.body || '').slice(0, 140));
+        notifyOS('Zeno', semMarcas(ev.body || ''));
       } else if (!initial && age < 60000 && ev.body) {
         pushMsg({ who: 'bot', text: ev.body });
       }
