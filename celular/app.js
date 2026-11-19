@@ -173,14 +173,15 @@
 
   // ---------- estrutura principal ----------
   // 1.12: ícones desenhados (traço fino) no lugar dos emojis; Arquivos foi para dentro de "Mais" e entrou o Dinheiro
+  // 1.16: ícones no estilo novo (traço fino e arredondado, como no iOS)
   var ICONES = {
-    chat: 'M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-4.2 3.6c-.5.4-1.3.1-1.3-.6V16A2.5 2.5 0 0 1 4 13.5z',
-    day: 'M7 3v3M17 3v3M4.5 8.5h15M6 5h12a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM8 12.5h3v3H8z',
-    fin: 'M3.5 7.5A2.5 2.5 0 0 1 6 5h12a2.5 2.5 0 0 1 2.5 2.5v9A2.5 2.5 0 0 1 18 19H6a2.5 2.5 0 0 1-2.5-2.5zM3.5 10h17M15.5 14.5h2',
-    lists: 'M9 6.5h11M9 12h11M9 17.5h11M4 6.5l1 1 2-2M4 12l1 1 2-2M4 17.5l1 1 2-2',
-    ctl: 'M5 4v6M5 14v6M12 4v3M12 11v9M19 4v9M19 17v3M3 10h4M10 7h4M17 13h4',
+    chat: 'M20 11.5a7.5 7.5 0 0 1-10.9 6.7L4.5 19.5l1.3-4.2A7.5 7.5 0 1 1 20 11.5zM8.8 11.5h.01M12 11.5h.01M15.2 11.5h.01',
+    day: 'M4 8.5A3.5 3.5 0 0 1 7.5 5h9A3.5 3.5 0 0 1 20 8.5v8a3.5 3.5 0 0 1-3.5 3.5h-9A3.5 3.5 0 0 1 4 16.5zM8.5 3v4M15.5 3v4M4 10h16M9 15l2 2 4-4',
+    fin: 'M4 7.5A2.5 2.5 0 0 1 6.5 5h11A2.5 2.5 0 0 1 20 7.5v9a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5zM15 12h5M15.5 12h.01',
+    lists: 'M7.5 4.5h9a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3h-9a3 3 0 0 1-3-3v-9a3 3 0 0 1 3-3zM8.5 12l2.5 2.5 4.5-5',
+    ctl: 'M3.5 7.5A2.5 2.5 0 0 1 6 5h12a2.5 2.5 0 0 1 2.5 2.5v6A2.5 2.5 0 0 1 18 16H6a2.5 2.5 0 0 1-2.5-2.5zM9 20h6M12 16v4',
     more: 'M5 12h.01M12 12h.01M19 12h.01',
-    files: 'M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5',
+    files: 'M6 3.5h8.5L19 8v11a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 19V5a1.5 1.5 0 0 1 1-1.5zM14 3.5V8h5',
   };
   function icone(id) {
     var NS = 'http://www.w3.org/2000/svg'; var s = document.createElementNS(NS, 'svg'); s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('aria-hidden', 'true'); s.setAttribute('class', 'ic');
@@ -248,7 +249,7 @@
     composerTa = h('textarea', { rows: '1', placeholder: 'Fale com o Zeno…', enterkeyhint: 'send' });
     composerTa.addEventListener('input', function () { composerTa.style.height = 'auto'; composerTa.style.height = Math.min(120, composerTa.scrollHeight) + 'px'; });
     composerTa.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } });
-    micBtn = h('button', { class: 'round mic', 'aria-label': 'Falar', onclick: toggleMic }, '🎤');
+    micBtn = h('button', { class: 'round mic', 'aria-label': 'Falar', onclick: toggleMic }, '🎤'); // o visual 1.16 pinta o botão como orbe
     chatBox = h('div', { class: 'view chat', hidden: true }, list,
       h('div', { class: 'composer' }, micBtn, composerTa, h('button', { class: 'round', 'aria-label': 'Enviar', onclick: function () { submit(); } }, '➤')));
     views.append(chatBox);
