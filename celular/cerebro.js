@@ -131,6 +131,26 @@
     return o.prov === 'anthropic' ? viaAnthropic(x) : viaCompat(x);
   }
 
+  // 1.16.9: o AGENTE no servidor. A IA do Zeno age sozinha lá (tarefas, notas, finanças, agenda do Zeno, internet, fila do PC) e devolve a resposta pronta;
+  // o celular só manda a conversa. o: { base, chave (sessão), historico, texto, ambiente?, fetch, aoUso? } -> { texto, acoes, zeno }
+  async function agente(o) {
+    var f = o.fetch || (typeof fetch !== 'undefined' ? fetch.bind(globalThis) : null);
+    if (!f) throw erroAmigavel('zenoia', 0, true);
+    if (!o.chave) throw new Error('Entre de novo no app do Zeno para usar a IA do Zeno.');
+    if (!o.base) throw new Error('IA do Zeno sem endereço.');
+    var msgs = (o.historico || []).slice(); msgs.push({ role: 'user', content: String(o.texto || '').slice(0, 2000) });
+    var ctl = typeof AbortController !== 'undefined' ? new AbortController() : null; var t = ctl ? setTimeout(function () { ctl.abort(); }, 115000) : null;
+    var res;
+    try { res = await f(String(o.base).replace(/\/+$/, '') + '/agente', { method: 'POST', headers: { authorization: 'Bearer ' + o.chave, 'content-type': 'application/json' }, body: JSON.stringify({ messages: msgs, ambiente: o.ambiente || '' }), signal: ctl ? ctl.signal : undefined }); }
+    catch (_) { if (t) clearTimeout(t); throw erroAmigavel('zenoia', 0, true); }
+    if (t) clearTimeout(t);
+    var j = null; try { j = await res.json(); } catch (_) { j = null; }
+    if (res.ok && j && j.ok) { if (j.zeno && o.aoUso) { try { o.aoUso(j.zeno); } catch (_) { /* medidor é só enfeite */ } } return { texto: String(j.texto || ''), acoes: Array.isArray(j.acoes) ? j.acoes : [], zeno: j.zeno || null }; }
+    var e = (j && j.mensagem) ? new Error(j.mensagem) : erroAmigavel('zenoia', res.status, false);
+    e.status = res.status; if (j) { e.codigo = j.codigo || ''; e.volta = j.volta || null; e.zeno = { uso: j.uso, limites: j.limites }; }
+    throw e;
+  }
+
   // conversa do celular → histórico para a IA: só você/Zeno, começando por você, sem papéis repetidos
   function historicoDe(msgs, max) {
     var out = [];
@@ -146,5 +166,5 @@
     return out;
   }
 
-  return { conversar: conversar, historicoDe: historicoDe, PROVS: PROVS, erroAmigavel: erroAmigavel };
+  return { conversar: conversar, agente: agente, historicoDe: historicoDe, PROVS: PROVS, erroAmigavel: erroAmigavel };
 });

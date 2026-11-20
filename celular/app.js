@@ -67,7 +67,7 @@
   // ---------- estado ----------
   var S = {
     tab: 'chat', pcOnline: false, pcSeen: 0, msgs: LS.get('zeno.msgs', []), alerts: LS.get('zeno.alerts', []), inbox: LS.get('zeno.inbox', []),
-    tasks: [], memory: [], routines: [], shortcuts: [], notes: [], waiting: [], projects: [], painel: [], listTab: 'tasks', confirms: [], answered: LS.get('zeno.answered', []),
+    tasks: [], memory: [], routines: [], shortcuts: [], notes: [], waiting: [], projects: [], painel: [], agenda_zeno: [], listTab: 'tasks', confirms: [], answered: LS.get('zeno.answered', []),
     speak: LS.get('zeno.speak', false), loc: LS.get('zeno.loc', false), since: null, unread: 0, listening: false, busy: 0,
   };
   var pend = {}; // id do pedido -> como mostrar a resposta
@@ -304,7 +304,7 @@
     var slot = document.getElementById('bannerSlot');
     if (!slot) return;
     clear(slot);
-    if (!S.pcOnline && iaPronta()) slot.append(h('div', { class: 'banner info' }, 'O computador está desligado, mas o Zeno do celular responde sozinho' + (IA.prov === 'zenoia' && ZIA.uso && ZIA.limites ? ' (IA do Zeno: ' + ZIA.uso.dia + ' de ' + ZIA.limites.dia + ' hoje)' : '') + ': conversa, tarefas, notas e finanças. Música e controle do PC esperam ele ligar.'));
+    if (!S.pcOnline && iaPronta()) slot.append(h('div', { class: 'banner info' }, 'O computador está desligado, mas o Zeno do celular responde sozinho' + (IA.prov === 'zenoia' && ZIA.uso && ZIA.limites ? ' (IA do Zeno: ' + ZIA.uso.dia + ' de ' + ZIA.limites.dia + ' hoje)' : '') + (IA.prov === 'zenoia' ? ': conversa, tarefas, notas, finanças, agenda e internet' : ': conversa, tarefas, notas e finanças') + '. Música e controle do PC esperam ele ligar.'));
     else if (!S.pcOnline) slot.append(h('div', { class: 'banner' }, S.pcSeen ? 'O computador está desligado (visto às ' + hhmm(S.pcSeen) + '). Pedidos ficam guardados por 1 hora e rodam quando ele ligar.' : 'O Zeno do computador ainda não apareceu. Abra o Zeno no PC e entre com esta mesma conta.'));
   }
   function go(tab) {
@@ -544,9 +544,16 @@
     try {
       var hist = ZenoCerebro.historicoDe(S.msgs.filter(function (m) { return !m.wait; }), 13);
       if (hist.length && hist[hist.length - 1].role === 'user') hist.pop(); // a mensagem de agora vai à parte
-      var servidor = IA.prov === 'zenoia';
-      var resp = await ZenoCerebro.conversar({ prov: IA.prov, chave: servidor ? await sb.auth.token() : iaChave(), base: servidor ? ZIA_BASE + '/v1' : undefined, system: sistemaLocal(), historico: hist, texto: text.slice(0, 2000), tools: ferramentasLocais(), fetch: window.fetch.bind(window),
-        aoUso: function (z) { if (z && z.uso) { ZIA.uso = z.uso; ZIA.limites = z.limites || ZIA.limites; } } });
+      var servidor = IA.prov === 'zenoia'; var resp;
+      var aoUso = function (z) { if (z && z.uso) { ZIA.uso = z.uso; ZIA.limites = z.limites || ZIA.limites; } };
+      if (servidor) {
+        // 1.16.9: a IA do Zeno age sozinha no servidor (tarefas, notas, finanças, agenda, internet) e devolve a resposta pronta
+        var out = await ZenoCerebro.agente({ base: ZIA_BASE, chave: await sb.auth.token(), historico: hist, texto: text, ambiente: 'app do celular' + (S.pcOnline ? '' : '; o computador do usuário está desligado agora'), fetch: window.fetch.bind(window), aoUso: aoUso });
+        resp = out.texto;
+        if (out.acoes && out.acoes.length) pullSync().catch(function () { /* a próxima conferência traz */ }); // mostra na hora o que ele criou
+      } else {
+        resp = await ZenoCerebro.conversar({ prov: IA.prov, chave: iaChave(), system: sistemaLocal(), historico: hist, texto: text.slice(0, 2000), tools: ferramentasLocais(), fetch: window.fetch.bind(window), aoUso: aoUso });
+      }
       dropWait(wait.id); botMood('success', 2600);
       pushMsg({ who: 'bot', text: resp || '(sem resposta)' });
       if (viaVoice || S.speak) speakText(resp);
@@ -1258,8 +1265,22 @@
     return card;
   }
 
+  // 1.16.9: agenda do próprio Zeno (guardada no servidor; funciona com o PC desligado e a IA do Zeno cria e consulta)
+  function agendaZenoCard() {
+    var agora = Date.now(); var ini = new Date(); ini.setHours(0, 0, 0, 0);
+    var lista = (S.agenda_zeno || []).filter(function (e) { return Date.parse(e.inicio) >= ini.getTime() && Date.parse(e.inicio) < agora + 14 * 86400000; }).sort(function (a, b) { return Date.parse(a.inicio) - Date.parse(b.inicio); });
+    var card = h('div', { class: 'card' }, h('h3', { text: '🗓 Agenda do Zeno' }));
+    if (!lista.length) { card.append(h('p', { class: 'hint', text: 'Nada marcado nos próximos 14 dias. Peça ao Zeno: “marca dentista amanhã às 15h30”.' })); return card; }
+    lista.slice(0, 12).forEach(function (e) {
+      var d = new Date(e.inicio); var quando = d.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' }) + (e.diaTodo ? ' · dia todo' : ' · ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()));
+      card.append(h('div', { class: 'item' }, h('div', { class: 't' }, h('b', { text: e.titulo }), h('div', { class: 'muted small', text: quando + (e.lembrar_min ? ' · avisa ' + e.lembrar_min + ' min antes' : '') })),
+        h('button', { class: 'x', 'aria-label': 'Apagar compromisso', onclick: function () { mutate('agenda_zeno', function (l) { return l.filter(function (x) { return x.id !== e.id; }); }); } }, '✕')));
+    });
+    return card;
+  }
   function viewDay(el) {
     var P = pnl();
+    el.append(agendaZenoCard());
     if (!P) {
       el.append(h('div', { class: 'card' }, h('h3', { text: '📅 Seu dia' }), h('p', { class: 'hint', text: 'Ainda não chegou nada do computador. Abra o Zeno no PC (versão 0.7 ou mais nova) com a mesma conta; o resumo do dia, a agenda e o foco aparecem aqui em alguns segundos.' })));
       return;
@@ -1556,7 +1577,7 @@
     };
     return h('div', { class: 'card' },
       h('h3', { text: '🧠 IA do celular' }),
-      h('p', { class: 'hint', style: 'margin-top:6px', text: zeno ? 'A IA do Zeno vem na assinatura, sem chave. Ela responde aqui no celular, com o PC ligado ou desligado, com limite por dia e por semana.' : (tem ? 'Pronto: quando o PC estiver desligado, o Zeno responde sozinho aqui no celular (conversa, tarefas, notas e finanças).' : 'Cole a sua chave de IA e o Zeno passa a responder sozinho, sem limite do Zeno.') }),
+      h('p', { class: 'hint', style: 'margin-top:6px', text: zeno ? 'A IA do Zeno vem na assinatura, sem chave. Ela cria tarefas, notas, gastos e compromissos, pesquisa na internet e responde aqui no celular, com o PC ligado ou desligado. Tem limite por dia e por semana.' : (tem ? 'Pronto: quando o PC estiver desligado, o Zeno responde sozinho aqui no celular (conversa, tarefas, notas e finanças).' : 'Cole a sua chave de IA e o Zeno passa a responder sozinho, sem limite do Zeno.') }),
       sel,
       zeno ? medidorZeno() : h('div', {}, h('div', { style: 'height:8px' }), inp,
         h('div', { class: 'row', style: 'margin-top:10px' },
