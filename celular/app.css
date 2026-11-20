@@ -14,6 +14,8 @@ button:active:not(:disabled) { transform: scale(.94); }
 button:disabled { opacity: .45; }
 input, textarea, select { font: inherit; color: var(--txt); background: var(--card2); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; width: 100%; outline: none; -webkit-appearance: none; user-select: text; }
 input:focus, textarea:focus, select:focus { border-color: var(--acc2); }
+/* 16px evita o zoom automático do iPhone ao tocar num campo (e deixa liberar o zoom da página para quem precisa) */
+input, textarea, select { font-size: 16px; }
 input[type=range] { -webkit-appearance: none; appearance: none; padding: 0; height: 30px; background: none; border: 0; }
 input[type=range]::-webkit-slider-runnable-track { height: 8px; border-radius: 8px; background: var(--card2); border: 1px solid var(--line); }
 input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 28px; height: 28px; margin-top: -11px; border-radius: 50%; background: var(--acc); box-shadow: 0 2px 8px rgba(0, 0, 0, .5); }
@@ -639,3 +641,9 @@ input[type=range]::-webkit-slider-thumb { width: 28px; height: 28px; margin-top:
 .rc-fit .rc-img, .shot { border-radius: 22px; border: 1px solid rgba(255, 255, 255, .16); }
 .tab-mais.on .ic { stroke: #fff; }
 .pl.empty .pl-shade { display: none; }
+
+/* 1.16.11: "Avançado" recolhido (chave própria de IA) */
+details.avancado { margin-top: 12px; }
+details.avancado > summary { cursor: pointer; font-weight: 600; opacity: .8; padding: 4px 0; }
+details.avancado[open] > summary { margin-bottom: 8px; }
+details.avancado select { width: 100%; }

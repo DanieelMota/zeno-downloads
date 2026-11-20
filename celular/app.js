@@ -464,7 +464,7 @@
     return [
       { name: 'tarefa_criar', description: 'Cria uma tarefa na lista do usuário.', input_schema: obj({ titulo: str('O que fazer') }, ['titulo']),
         run: async function (a) {
-          var t = String(a.titulo || '').trim().slice(0, 300); if (!t) return 'Erro: faltou o título.';
+          var t = String(a.titulo || '').trim().slice(0, 300); if (!t) return 'Faltou dizer o nome. Pode repetir?';
           var id = newId();
           await mutate('tasks', function (l) { l.push({ id: id, title: t, done: false, created: today() }); return l; });
           return S.tasks.some(function (x) { return x.id === id; }) ? 'Tarefa criada: ' + t : 'Não consegui salvar a tarefa (sem internet ou assinatura inativa).';
@@ -485,7 +485,7 @@
         } },
       { name: 'nota_criar', description: 'Guarda uma nota rápida.', input_schema: obj({ texto: str('Texto da nota') }, ['texto']),
         run: async function (a) {
-          var t = String(a.texto || '').trim().slice(0, 1000); if (!t) return 'Erro: faltou o texto.';
+          var t = String(a.texto || '').trim().slice(0, 1000); if (!t) return 'Faltou dizer o texto. Pode repetir?';
           var id = newId();
           await mutate('notes', function (l) { l.push({ id: id, text: t, tags: [], created: Date.now() }); return l.slice(-1000); });
           return S.notes.some(function (x) { return x.id === id; }) ? 'Nota guardada.' : 'Não consegui salvar a nota (sem internet ou assinatura inativa).';
@@ -498,7 +498,7 @@
       { name: 'gasto_registrar', description: 'Anota um gasto ou uma receita nas finanças. O valor vai em reais (ex.: 35.5).', input_schema: obj({ valor: { type: 'number', description: 'Valor em reais' }, descricao: str('Com o quê (ex.: mercado, uber)'), tipo: { type: 'string', enum: ['gasto', 'receita'] } }, ['valor', 'descricao']),
         run: async function (a) {
           var tipo = a.tipo === 'receita' ? 'receita' : 'gasto'; var c = Math.round(Number(a.valor) * 100);
-          if (!(c > 0) || c > 100000000) return 'Erro: valor inválido.';
+          if (!(c > 0) || c > 100000000) return 'Não entendi o valor. Pode repetir?';
           var d = String(a.descricao || '').trim().slice(0, 80); var cat = adivinhaCat(d, tipo);
           var item = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7), data: today(), tipo: tipo, valor: c, desc: d, cat: cat, criado: Date.now() };
           var ok = await mutateFin(function (v) { v.itens.push(item); if (v.itens.length > 5000) v.itens.splice(0, v.itens.length - 5000); return v; });
@@ -520,7 +520,7 @@
         } },
       { name: 'enviar_para_o_pc', description: 'Guarda um pedido para o computador fazer quando ligar (música, controle do PC, arquivos, e-mail…). Vale por 1 hora. Use só se o usuário aceitar.', input_schema: obj({ pedido: str('O pedido, como o usuário disse') }, ['pedido']),
         run: async function (a) {
-          var t = String(a.pedido || '').trim().slice(0, 2000); if (!t) return 'Erro: faltou o pedido.';
+          var t = String(a.pedido || '').trim().slice(0, 2000); if (!t) return 'Não entendi o pedido. Pode repetir?';
           var c = await cmd('ask', { text: t });
           pend[c.id] = { mode: 'chat', waitId: 'pc' + c.id, voice: false };
           return 'Pedido guardado para o PC. Ele responde aqui quando ligar (vale por 1 hora).';
@@ -610,6 +610,16 @@
       var rc = await C.buscar({ nome: q });
       return { contatos: rc.contatos || [] };
     }
+    if (op === 'espelho_iniciar' || op === 'espelho_parar') {
+      var E = plug('ZenoEspelho');
+      if (!E) return { erro: 'O espelhamento de tela não está instalado neste app. Atualize o app Android do Zeno.' };
+      if (op === 'espelho_parar') { try { await E.parar(); } catch (_) { /* já parado */ } return { ok: true }; }
+      var okE = await confirmarLocal('Mostrar a tela no computador',
+        'O Zeno do seu computador quer ver a tela deste celular (só ver, ele não controla nada). Vale só na mesma rede Wi-Fi e para sozinho em 1 hora. Depois o Android vai pedir uma última confirmação.');
+      if (!okE) return { cancelado: true, aviso: 'O usuário negou ou não respondeu. A tela não foi compartilhada.' };
+      try { var re = await E.iniciar(); return { ok: true, host: re.host, porta: re.porta, token: re.token }; }
+      catch (e) { return { erro: String((e && e.message) || e || 'Não consegui espelhar a tela.').replace(/^NEGADO: /, 'Você não deu a permissão do Android. ') }; }
+    }
     var F = plug('ZenoArquivos');
     if (!F) return { erro: 'O acesso a arquivos não está instalado neste app.' };
     var est = await F.estado();
@@ -618,6 +628,7 @@
     var cam = String(a.caminho || '').slice(0, 400);
     if (op === 'arq_listar') { var l = await F.listar({ pasta: String(a.pasta || '').slice(0, 400), max: Number(a.max) || 30 }); return { pasta: l.pasta, total: l.total, itens: (l.itens || []).map(itemArq) }; }
     if (op === 'arq_buscar') { var b = await F.buscar({ nome: String(a.nome || '').slice(0, 100), pasta: String(a.pasta || '').slice(0, 400), max: Number(a.max) || 20 }); return { encontrados: b.encontrados, busca_incompleta: b.busca_incompleta, itens: (b.itens || []).map(itemArq) }; }
+    if (op === 'arq_armazenamento') { var m = await F.armazenamento(); m.maiores = (m.maiores || []).map(itemArq); return m; }
     if (op === 'arq_ler') { var r = await F.ler({ caminho: cam }); return { caminho: r.caminho, texto: String(r.texto || '').slice(0, 6000), cortado: !!r.cortado }; }
     if (op === 'arq_apagar' || op === 'arq_compartilhar') {
       var i = await F.info({ caminho: cam });
@@ -630,7 +641,7 @@
       await F.compartilhar({ caminho: i.caminho });
       return { ok: true, aviso: 'Abri a lista de apps para compartilhar. O usuário escolhe o app e toca em enviar.' };
     }
-    return { erro: 'Pedido desconhecido.' };
+    return { erro: 'Não entendi, pode repetir?' };
   }
   async function atenderRpc(d) {
     var res;
@@ -698,7 +709,7 @@
         for (var i = 0; i < ev.results.length; i++) { t += ev.results[i][0].transcript; if (ev.results[i].isFinal) finalText = t; }
         composerTa.value = t;
       };
-      rec.onerror = function (ev) { toast(ev.error === 'not-allowed' ? 'Libere o microfone nos ajustes do Safari para falar.' : 'Não consegui ouvir (' + ev.error + ').'); };
+      rec.onerror = function (ev) { toast(ev.error === 'not-allowed' ? 'Libere o microfone: Ajustes › Safari › Microfone (ou use o 🎤 do teclado para ditar).' : 'Não consegui ouvir (' + ev.error + ').'); };
       rec.onend = function () {
         S.listening = false; micBtn.classList.remove('rec'); micIcone(false); botMood(S.pcOnline ? 'idle' : 'sleeping');
         var t = (finalText || composerTa.value).trim();
@@ -1058,7 +1069,7 @@
           RC.status.classList.toggle('live', !!fresh);
         }
         beat();
-      } catch (e) { if (RC.status) RC.status.textContent = e.offline ? 'Sem internet' : 'Erro: ' + e.message; }
+      } catch (e) { if (RC.status) RC.status.textContent = e.offline ? 'Sem internet' : 'Não deu certo: ' + e.message; }
     }
     if (RC.open) RC.t = setTimeout(rcLoop, delay);
   }
@@ -1582,22 +1593,29 @@
       catch (e) { toast(e.message); }
       b.disabled = false; b.textContent = antes;
     };
-    return h('div', { class: 'card' },
-      h('h3', { text: '🧠 IA do celular' }),
-      h('p', { class: 'hint', style: 'margin-top:6px', text: zeno ? 'A IA do Zeno vem na assinatura, sem chave. Ela cria tarefas, notas, gastos e compromissos, pesquisa na internet e responde aqui no celular, com o PC ligado ou desligado. Tem limite por dia e por semana.' : (tem ? 'Pronto: quando o PC estiver desligado, o Zeno responde sozinho aqui no celular (conversa, tarefas, notas e finanças).' : 'Cole a sua chave de IA e o Zeno passa a responder sozinho, sem limite do Zeno.') }),
+    // 1.16.11: à vista só a IA do Zeno (a mesma do computador). A chave própria fica em "Avançado", recolhida:
+    // ela ainda serve quando a pessoa quer usar a própria IA ou quando o motor do Zeno não entende (ver cerebro.js).
+    var av = h('details', { class: 'avancado' }, h('summary', { text: 'Avançado: usar a minha própria chave de IA' }),
       sel,
-      zeno ? medidorZeno() : h('div', {}, h('div', { style: 'height:8px' }), inp,
+      zeno ? null : h('div', {}, h('div', { style: 'height:8px' }), inp,
         h('div', { class: 'row', style: 'margin-top:10px' },
           h('button', { class: 'btn sm', onclick: salvar }, 'Guardar'),
           tem ? h('button', { class: 'btn sm alt', onclick: testar }, 'Testar') : null,
           tem ? h('button', { class: 'btn sm alt', onclick: function () { delete IA.keys[IA.prov]; iaSalvar(); toast('Chave removida deste aparelho.'); updateTop(); refreshView(); } }, 'Remover') : null),
-        h('p', { class: 'hint', text: 'A chave fica só neste aparelho e nunca vai para a nuvem. Groq e Gemini têm plano grátis; Claude e ChatGPT cobram direto de você, pelo que usar.' })));
+        h('p', { class: 'hint', text: 'Fica guardada só neste celular. Groq e Gemini têm plano grátis; Claude e ChatGPT cobram direto de você, pelo que usar.' })));
+    if (!zeno) av.open = true;
+    return h('div', { class: 'card' },
+      h('h3', { text: '🧠 IA do celular' }),
+      h('p', { class: 'hint', style: 'margin-top:6px', text: zeno ? 'Usa a IA do Zeno do seu computador: vem na assinatura, sem chave nenhuma. Funciona aqui no celular com o PC ligado ou desligado, com limite por dia e por semana.' : 'Você está usando a sua própria chave do ' + nome + '. Para voltar à IA do Zeno (incluída, sem chave), escolha “IA do Zeno” abaixo.' }),
+      zeno ? medidorZeno() : null,
+      av);
   }
   function viewMore(el) {
     var perm = 'Notification' in window ? Notification.permission : 'unsupported';
     el.append(
       h('button', { class: 'card linkcard', onclick: function () { go('files'); } }, h('span', { class: 'lc-ic' }, icone('files')), h('div', { class: 't' }, h('b', { text: 'Arquivos' }), h('div', { class: 'muted small', text: 'Mande do celular para o PC e baixe o que o PC mandou.' })), h('span', { class: 'lc-seta', text: '›' })),
       iaCard(),
+      (SO === 'ios' && !instalado) ? h('div', { class: 'card' }, h('div', { class: 't' }, h('b', { text: 'Instale o Zeno na tela de início' }), h('div', { class: 'muted small', text: 'Toque em Compartilhar ⬆︎ › Adicionar à Tela de Início. Assim o iPhone guarda seu login e a chave de IA com segurança e libera as notificações. Pelo navegador, ele pode apagar tudo depois de alguns dias sem uso.' }))) : null,
       h('div', { class: 'sec', text: 'Alertas do PC' }),
       S.alerts.length ? h('div', {}, S.alerts.slice().reverse().slice(0, 30).map(function (a) {
         return h('div', { class: 'card alertItem' }, h('b', { text: a.title || 'Zeno' }), h('div', { text: a.body || '' }), h('div', { class: 'muted small', text: hhmm(a.at) }));
@@ -1609,7 +1627,7 @@
         h('div', { class: 'item' }, h('div', { class: 't' }, 'Compartilhar minha localização', h('div', { class: 'muted small', text: 'Só quando você pergunta de lugar ("onde estou", "perto de mim", rota). Vai direto para o seu PC.' })),
           h('button', { class: 'btn sm' + (S.loc ? '' : ' alt'), onclick: async function () {
             S.loc = !S.loc; LS.set('zeno.loc', S.loc);
-            if (S.loc) { var p = await posicao(); if (!p) toast('Libere a localização para este app nos ajustes do celular.'); }
+            if (S.loc) { var p = await posicao(); if (!p) toast(SO === 'ios' ? 'Libere a localização: Ajustes › Privacidade › Serviços de Localização › Safari (ou Zeno).' : 'Libere a localização para este app nos ajustes do celular.'); }
             refreshView();
           } }, S.loc ? 'Ligado' : 'Desligado')),
         NATIVO && plug('ZenoBiometria') ? h('div', { class: 'item' }, h('div', { class: 't' }, 'Bloquear o app com a digital', h('div', { class: 'muted small', text: 'Pede a digital ao abrir e depois de 30 segundos fora do app.' })),
@@ -1625,12 +1643,12 @@
             } catch (e) { toast('Não consegui mudar a digital.'); }
             refreshView();
           } }, LS.get('zeno.bio', false) ? 'Ligado' : 'Desligado')) : null,
-        NATIVO && plug('ZenoWakeNativo') ? h('div', { class: 'item' }, h('div', { class: 't' }, 'Chamar pelo nome (“Ei Zeno”)', h('div', { class: 'muted small', id: 'wakeInfo', text: 'Escuta em segundo plano, só dentro do celular. Toque em Ligar para ver o estado.' })),
+        NATIVO && plug('ZenoWakeNativo') ? h('div', { class: 'item', id: 'wakeItem', style: 'display:none' }, h('div', { class: 't' }, 'Chamar pelo nome (“Ei Zeno”)', h('div', { class: 'muted small', id: 'wakeInfo', text: 'Escuta em segundo plano, só dentro do celular. Toque em Ligar para ver o estado.' })),
           h('button', { class: 'btn sm alt', onclick: async function () {
             var W = plug('ZenoWakeNativo'); var info = document.getElementById('wakeInfo');
             try {
               var e0 = await W.estado();
-              if (!e0.modelo) { if (info) info.textContent = 'Ainda falta o modelo de voz “Ei Zeno” no app. Veja android/README.md.'; return; }
+              if (!e0.modelo) { if (info) info.textContent = 'O “Ei Zeno” ainda não está disponível neste celular. Use o botão de falar.'; return; }
               if (e0.ligado) { await W.desligar(); if (info) info.textContent = 'Desligado.'; return; }
               var perm = await plug('SpeechRecognition').requestPermissions();
               if (perm && perm.speechRecognition === 'denied') { if (info) info.textContent = 'Libere o microfone nos ajustes do Android.'; return; }
@@ -1639,11 +1657,13 @@
               if (info) info.textContent = 'Ligado: diga “Ei Zeno”. Para o Android não fechar o Zeno, deixe a bateria sem restrição.';
             } catch (e) { if (info) info.textContent = 'Não consegui: ' + String((e && e.message) || e).slice(0, 80); }
           } }, 'Ligar / desligar')) : null,
-        h('div', { class: 'item' }, h('div', { class: 't' }, 'Notificações', h('div', { class: 'muted small', text: perm === 'granted' ? 'Ativadas.' : perm === 'denied' ? 'Bloqueadas nos ajustes do iPhone.' : perm === 'unsupported' ? 'No iPhone, primeiro use Compartilhar > Adicionar à Tela de Início.' : 'Avisa mesmo com o app fechado.' })),
+        h('div', { class: 'item' }, h('div', { class: 't' }, 'Notificações', h('div', { class: 'muted small', text: perm === 'granted' ? 'Ativadas.' : perm === 'denied' ? 'Bloqueadas nos ajustes do iPhone.' : perm === 'unsupported' ? 'No iPhone (iOS 16.4 ou mais novo), primeiro use Compartilhar > Adicionar à Tela de Início.' : 'Avisa mesmo com o app fechado.' })),
           perm === 'default' ? h('button', { class: 'btn sm', onclick: enableNotifications }, 'Ativar') : null),
         h('div', { class: 'item' }, h('div', { class: 't' }, 'Conta', h('div', { class: 'muted small', text: (sb.auth.user() || {}).email || '' })),
           h('button', { class: 'btn alt sm', onclick: logout }, 'Sair'))),
       h('p', { class: 'hint', text: 'Zeno no celular 1.16.8 · O PC precisa estar ligado com o Zeno aberto.' }));
+    // 1.16.11: o botão "Ei Zeno" só aparece quando o modelo de voz já existe no app
+    if (NATIVO && plug('ZenoWakeNativo')) plug('ZenoWakeNativo').estado().then(function (e0) { var it = document.getElementById('wakeItem'); if (it && e0 && e0.modelo) it.style.display = ''; }).catch(function () { /* fica escondido */ });
   }
   async function enableNotifications() {
     try {
