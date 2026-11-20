@@ -1273,7 +1273,7 @@
     if (!lista.length) { card.append(h('p', { class: 'hint', text: 'Nada marcado nos próximos 14 dias. Peça ao Zeno: “marca dentista amanhã às 15h30”.' })); return card; }
     lista.slice(0, 12).forEach(function (e) {
       var d = new Date(e.inicio); var quando = d.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' }) + (e.diaTodo ? ' · dia todo' : ' · ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()));
-      card.append(h('div', { class: 'item' }, h('div', { class: 't' }, h('b', { text: e.titulo }), h('div', { class: 'muted small', text: quando + (e.lembrar_min ? ' · avisa ' + e.lembrar_min + ' min antes' : '') })),
+      card.append(h('div', { class: 'item' }, h('div', { class: 't' }, h('b', { text: e.titulo }), h('div', { class: 'muted small', text: quando + '' })),
         h('button', { class: 'x', 'aria-label': 'Apagar compromisso', onclick: function () { mutate('agenda_zeno', function (l) { return l.filter(function (x) { return x.id !== e.id; }); }); } }, '✕')));
     });
     return card;
