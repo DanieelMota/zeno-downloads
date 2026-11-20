@@ -145,7 +145,7 @@
     catch (_) { if (t) clearTimeout(t); throw erroAmigavel('zenoia', 0, true); }
     if (t) clearTimeout(t);
     var j = null; try { j = await res.json(); } catch (_) { j = null; }
-    if (res.ok && j && j.ok) { if (j.zeno && o.aoUso) { try { o.aoUso(j.zeno); } catch (_) { /* medidor é só enfeite */ } } return { texto: String(j.texto || ''), acoes: Array.isArray(j.acoes) ? j.acoes : [], zeno: j.zeno || null }; }
+    if (res.ok && j && j.ok) { if (j.zeno && o.aoUso) { try { o.aoUso(j.zeno); } catch (_) { /* medidor é só enfeite */ } } return { texto: String(j.texto || ''), acoes: Array.isArray(j.acoes) ? j.acoes : [], zeno: j.zeno || null, semEntender: !!j.semEntender }; }
     var e = (j && j.mensagem) ? new Error(j.mensagem) : erroAmigavel('zenoia', res.status, false);
     e.status = res.status; if (j) { e.codigo = j.codigo || ''; e.volta = j.volta || null; e.zeno = { uso: j.uso, limites: j.limites }; }
     throw e;

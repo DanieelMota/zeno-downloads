@@ -431,6 +431,8 @@
   var IA = LS.get('zeno.ia', null) || { prov: 'zenoia', keys: {} }; // quem já guardou uma chave continua com ela; quem é novo começa na IA do Zeno
   if (!IA.keys || typeof IA.keys !== 'object') IA.keys = {};
   function iaSalvar() { LS.set('zeno.ia', IA); }
+  // IA grátis cadastrada pelo cliente (só no aparelho), usada quando o motor do Zeno não entende o pedido
+  function chaveGratisLocal() { var ks = (IA && IA.keys) || {}; var ordem = ['gemini', 'groq', 'openai', 'anthropic']; for (var i = 0; i < ordem.length; i++) if (String(ks[ordem[i]] || '').trim()) return ordem[i]; return ''; }
   function iaChave() { return String((IA.keys && IA.keys[IA.prov]) || '').trim(); }
   // 1.16.8: IA do Zeno (no servidor, incluída na assinatura, com limite por dia e por semana)
   var ZIA = { ativa: null, uso: null, limites: null, voltaDia: null, voltaSemana: null };
@@ -550,6 +552,11 @@
         // 1.16.9: a IA do Zeno age sozinha no servidor (tarefas, notas, finanças, agenda, internet) e devolve a resposta pronta
         var out = await ZenoCerebro.agente({ base: ZIA_BASE, chave: await sb.auth.token(), historico: hist, texto: text, ambiente: 'app do celular' + (S.pcOnline ? '' : '; o computador do usuário está desligado agora'), fetch: window.fetch.bind(window), aoUso: aoUso });
         resp = out.texto;
+        if (out.semEntender) { // o motor grátis não entendeu e o servidor não tem modelo: usa a IA grátis que o cliente cadastrou (Gemini, Groq…)
+          var alt = chaveGratisLocal();
+          if (alt) { resp = await ZenoCerebro.conversar({ prov: alt, chave: IA.keys[alt], system: sistemaLocal(), historico: hist, texto: text.slice(0, 2000), tools: ferramentasLocais(), fetch: window.fetch.bind(window), aoUso: aoUso }); }
+          else resp += ' Dica: cadastre uma chave grátis do Gemini ou da Groq em Mais › IA do celular e eu passo a responder esses pedidos também.';
+        }
         if (out.acoes && out.acoes.length) pullSync().catch(function () { /* a próxima conferência traz */ }); // mostra na hora o que ele criou
       } else {
         resp = await ZenoCerebro.conversar({ prov: IA.prov, chave: iaChave(), system: sistemaLocal(), historico: hist, texto: text.slice(0, 2000), tools: ferramentasLocais(), fetch: window.fetch.bind(window), aoUso: aoUso });
@@ -1551,7 +1558,7 @@
     if (!ZIA.uso || !ZIA.limites) return h('p', { class: 'hint', text: 'Conferindo o seu uso…' });
     var quando = function (iso) { try { return new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch (_) { return ''; } };
     return h('div', {}, barraUso('Hoje', ZIA.uso.dia, ZIA.limites.dia), barraUso('Nesta semana', ZIA.uso.semana, ZIA.limites.semana),
-      h('p', { class: 'hint', text: 'O uso de hoje zera à meia-noite' + (ZIA.voltaSemana && ZIA.uso.semana >= ZIA.limites.semana ? '; o da semana libera em ' + quando(ZIA.voltaSemana) : '') + '. Quando acabar, é só escolher outra IA acima e colocar a sua chave para continuar sem esperar.' }));
+      h('p', { class: 'hint', text: 'O uso de hoje zera à meia-noite' + (ZIA.voltaSemana && ZIA.uso.semana >= ZIA.limites.semana ? '; o da semana libera em ' + quando(ZIA.voltaSemana) : '') + '. Pedidos simples (tarefas, notas, gastos, agenda e dúvidas sobre o Zeno) não gastam o limite; só as conversas que pedem mais inteligência. Quando acabar, é só escolher outra IA acima e colocar a sua chave para continuar sem esperar.' }));
   }
   function iaCard() {
     if (!window.ZenoCerebro) return h('span');
