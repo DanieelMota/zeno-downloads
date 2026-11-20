@@ -281,6 +281,7 @@
     app.append(h('div', { class: 'top' }, MASC.top, h('div', { class: 'top-t' }, h('span', { class: 'top-sub', id: 'topSub', text: oi + ' 👋' }), h('h1', { id: 'topTitulo', text: 'Zeno' })), h('span', { class: 'voz-top' }, tracos()), topPill), h('div', { id: 'bannerSlot' }), views, dockEl);
     buildChat();
     go(S.tab);
+    zenoiaUso(); // 1.16.8: descobre se a IA do Zeno está ligada e quanto já foi usado
   }
   function updateTabs() {
     var ativa = null;
@@ -303,7 +304,8 @@
     var slot = document.getElementById('bannerSlot');
     if (!slot) return;
     clear(slot);
-    if (!S.pcOnline) slot.append(h('div', { class: 'banner' }, S.pcSeen ? 'O computador está desligado (visto às ' + hhmm(S.pcSeen) + '). Pedidos ficam guardados por 1 hora e rodam quando ele ligar.' : 'O Zeno do computador ainda não apareceu. Abra o Zeno no PC e entre com esta mesma conta.'));
+    if (!S.pcOnline && iaPronta()) slot.append(h('div', { class: 'banner info' }, 'O computador está desligado, mas o Zeno do celular responde sozinho' + (IA.prov === 'zenoia' && ZIA.uso && ZIA.limites ? ' (IA do Zeno: ' + ZIA.uso.dia + ' de ' + ZIA.limites.dia + ' hoje)' : '') + ': conversa, tarefas, notas e finanças. Música e controle do PC esperam ele ligar.'));
+    else if (!S.pcOnline) slot.append(h('div', { class: 'banner' }, S.pcSeen ? 'O computador está desligado (visto às ' + hhmm(S.pcSeen) + '). Pedidos ficam guardados por 1 hora e rodam quando ele ligar.' : 'O Zeno do computador ainda não apareceu. Abra o Zeno no PC e entre com esta mesma conta.'));
   }
   function go(tab) {
     S.tab = tab;
@@ -424,6 +426,144 @@
     var r = await sb.db.insert('zeno_commands', { from_device: DEV, kind: kind, payload: p });
     return Array.isArray(r) ? r[0] : r;
   }
+  // ---------- 1.16.7: cérebro do celular (o Zeno responde sozinho, sem o PC ligado) ----------
+  // A chave de IA é a do cliente e fica SÓ neste aparelho (localStorage); nunca vai para a nuvem nem para o PC.
+  var IA = LS.get('zeno.ia', null) || { prov: 'zenoia', keys: {} }; // quem já guardou uma chave continua com ela; quem é novo começa na IA do Zeno
+  if (!IA.keys || typeof IA.keys !== 'object') IA.keys = {};
+  function iaSalvar() { LS.set('zeno.ia', IA); }
+  function iaChave() { return String((IA.keys && IA.keys[IA.prov]) || '').trim(); }
+  // 1.16.8: IA do Zeno (no servidor, incluída na assinatura, com limite por dia e por semana)
+  var ZIA = { ativa: null, uso: null, limites: null, voltaDia: null, voltaSemana: null };
+  var ZIA_BASE = CFG.url + '/functions/v1/zeno-ia';
+  async function zenoiaUso() {
+    try {
+      var t = await sb.auth.token();
+      var r = await fetch(ZIA_BASE + '/uso', { method: 'POST', headers: { authorization: 'Bearer ' + t, 'content-type': 'application/json' }, body: '{}' });
+      var j = await r.json();
+      if (j && j.ok) { ZIA.ativa = !!j.ativa; ZIA.uso = j.uso; ZIA.limites = j.limites; ZIA.voltaDia = j.voltaDia; ZIA.voltaSemana = j.voltaSemana; }
+      else if (j && (j.codigo === 'inativa' || j.codigo === 'sessao')) ZIA.ativa = false;
+    } catch (_) { /* sem internet: tenta de novo mais tarde */ }
+    updateTop(); if (S.tab === 'more') refreshView();
+  }
+  function iaPronta() {
+    if (!window.ZenoCerebro || !ZenoCerebro.PROVS[IA.prov]) return false;
+    if (IA.prov === 'zenoia') return ZIA.ativa === true && sb.auth.signedIn();
+    return !!iaChave();
+  }
+  function nomeIA() { return window.ZenoCerebro && ZenoCerebro.PROVS[IA.prov] ? ZenoCerebro.PROVS[IA.prov].nome : 'IA'; }
+  function norm(t) { return foldTxt(t).replace(/\s+/g, ' ').trim(); }
+  function acharTarefa(q, soPend) {
+    var n = norm(q); if (!n) return [];
+    return S.tasks.filter(function (t) { if (soPend && t.done) return false; var x = norm(t.title || t.text); return x === n || x.indexOf(n) >= 0 || (x.length > 2 && n.indexOf(x) >= 0); });
+  }
+  function ferramentasLocais() {
+    var obj = function (props, req) { return { type: 'object', properties: props, required: req || [] }; };
+    var str = function (d) { return { type: 'string', description: d }; };
+    return [
+      { name: 'tarefa_criar', description: 'Cria uma tarefa na lista do usuário.', input_schema: obj({ titulo: str('O que fazer') }, ['titulo']),
+        run: async function (a) {
+          var t = String(a.titulo || '').trim().slice(0, 300); if (!t) return 'Erro: faltou o título.';
+          var id = newId();
+          await mutate('tasks', function (l) { l.push({ id: id, title: t, done: false, created: today() }); return l; });
+          return S.tasks.some(function (x) { return x.id === id; }) ? 'Tarefa criada: ' + t : 'Não consegui salvar a tarefa (sem internet ou assinatura inativa).';
+        } },
+      { name: 'tarefas_listar', description: 'Lista as tarefas pendentes (e quantas já foram feitas).', input_schema: obj({}),
+        run: async function () {
+          var pend_ = S.tasks.filter(function (t) { return !t.done; });
+          return pend_.length ? 'Pendentes (' + pend_.length + '): ' + pend_.map(function (t) { return t.title || t.text; }).join('; ') + '. Feitas: ' + (S.tasks.length - pend_.length) + '.' : 'Nenhuma tarefa pendente.';
+        } },
+      { name: 'tarefa_concluir', description: 'Marca uma tarefa pendente como feita, achando pelo nome (parte do texto basta).', input_schema: obj({ titulo: str('Nome ou parte do nome da tarefa') }, ['titulo']),
+        run: async function (a) {
+          var ach = acharTarefa(a.titulo, true);
+          if (!ach.length) return 'Não achei essa tarefa pendente. Pendentes: ' + (S.tasks.filter(function (t) { return !t.done; }).map(function (t) { return t.title || t.text; }).join('; ') || 'nenhuma') + '.';
+          if (ach.length > 1) return 'Achei mais de uma: ' + ach.map(function (t) { return t.title || t.text; }).join('; ') + '. Peça para o usuário dizer qual.';
+          var id = ach[0].id;
+          await mutate('tasks', function (l) { l.forEach(function (x) { if (x.id === id) x.done = true; }); return l; });
+          return 'Tarefa concluída: ' + (ach[0].title || ach[0].text);
+        } },
+      { name: 'nota_criar', description: 'Guarda uma nota rápida.', input_schema: obj({ texto: str('Texto da nota') }, ['texto']),
+        run: async function (a) {
+          var t = String(a.texto || '').trim().slice(0, 1000); if (!t) return 'Erro: faltou o texto.';
+          var id = newId();
+          await mutate('notes', function (l) { l.push({ id: id, text: t, tags: [], created: Date.now() }); return l.slice(-1000); });
+          return S.notes.some(function (x) { return x.id === id; }) ? 'Nota guardada.' : 'Não consegui salvar a nota (sem internet ou assinatura inativa).';
+        } },
+      { name: 'notas_buscar', description: 'Procura nas notas do usuário (sem busca, mostra as últimas).', input_schema: obj({ busca: str('Palavra para procurar') }),
+        run: async function (a) {
+          var q = norm(a.busca); var l = S.notes.filter(function (n) { return !q || norm(n.text).indexOf(q) >= 0; }).slice(-8);
+          return l.length ? l.map(function (n) { return '- ' + String(n.text).slice(0, 200); }).join('\n') : 'Nenhuma nota' + (q ? ' com essa palavra.' : '.');
+        } },
+      { name: 'gasto_registrar', description: 'Anota um gasto ou uma receita nas finanças. O valor vai em reais (ex.: 35.5).', input_schema: obj({ valor: { type: 'number', description: 'Valor em reais' }, descricao: str('Com o quê (ex.: mercado, uber)'), tipo: { type: 'string', enum: ['gasto', 'receita'] } }, ['valor', 'descricao']),
+        run: async function (a) {
+          var tipo = a.tipo === 'receita' ? 'receita' : 'gasto'; var c = Math.round(Number(a.valor) * 100);
+          if (!(c > 0) || c > 100000000) return 'Erro: valor inválido.';
+          var d = String(a.descricao || '').trim().slice(0, 80); var cat = adivinhaCat(d, tipo);
+          var item = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7), data: today(), tipo: tipo, valor: c, desc: d, cat: cat, criado: Date.now() };
+          var ok = await mutateFin(function (v) { v.itens.push(item); if (v.itens.length > 5000) v.itens.splice(0, v.itens.length - 5000); return v; });
+          return ok ? 'Anotado: ' + tipo + ' de ' + reais(c) + (d ? ' (' + d + ')' : '') + ', categoria ' + cat + '.' : 'Não consegui salvar (sem internet ou assinatura inativa).';
+        } },
+      { name: 'financas_resumo', description: 'Resumo das finanças de um mês: entrou, saiu, saldo e as maiores categorias.', input_schema: obj({ mes: str('AAAA-MM; vazio = mês atual') }),
+        run: async function (a) {
+          var mes = /^\d{4}-\d{2}$/.test(a.mes || '') ? a.mes : today().slice(0, 7); var f = finDados(); var ent = 0, sai = 0, cats = {};
+          f.itens.filter(function (i) { return String(i.data).slice(0, 7) === mes; }).forEach(function (i) { if (i.tipo === 'receita') ent += i.valor; else { sai += i.valor; cats[i.cat || 'outros'] = (cats[i.cat || 'outros'] || 0) + i.valor; } });
+          var top = Object.keys(cats).sort(function (x, y) { return cats[y] - cats[x]; }).slice(0, 3).map(function (k) { return k + ' ' + reais(cats[k]); }).join(', ');
+          return 'Mês ' + mes + ': entrou ' + reais(ent) + ', saiu ' + reais(sai) + ', saldo ' + reais(ent - sai) + (top ? '. Maiores gastos: ' + top + '.' : '.');
+        } },
+      { name: 'agenda_e_clima', description: 'Agenda de hoje e clima, como o PC enviou da última vez (pode não ser de agora).', input_schema: obj({}),
+        run: async function () {
+          var P = pnl(); if (!P) return 'O computador ainda não enviou a agenda e o clima.';
+          var ag = P.agenda && P.agenda.connected && Array.isArray(P.agenda.events) ? P.agenda.events : null;
+          var txt = (P.weather && P.weather.summary ? 'Clima: ' + P.weather.summary + '. ' : '') + (ag ? (ag.length ? 'Hoje: ' + ag.map(function (e) { return agendaTime(e) + ' ' + e.title; }).join('; ') + '.' : 'Nenhum compromisso hoje.') : 'O Google Agenda não está conectado no PC.');
+          return txt + ' (dados da última vez que o PC enviou)';
+        } },
+      { name: 'enviar_para_o_pc', description: 'Guarda um pedido para o computador fazer quando ligar (música, controle do PC, arquivos, e-mail…). Vale por 1 hora. Use só se o usuário aceitar.', input_schema: obj({ pedido: str('O pedido, como o usuário disse') }, ['pedido']),
+        run: async function (a) {
+          var t = String(a.pedido || '').trim().slice(0, 2000); if (!t) return 'Erro: faltou o pedido.';
+          var c = await cmd('ask', { text: t });
+          pend[c.id] = { mode: 'chat', waitId: 'pc' + c.id, voice: false };
+          return 'Pedido guardado para o PC. Ele responde aqui quando ligar (vale por 1 hora).';
+        } },
+    ];
+  }
+  function sistemaLocal() {
+    if (IA.prov === 'zenoia') return 'Ambiente: você está no celular do usuário e o computador dele está desligado agora. Hoje é ' + new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) + '. Tarefas, notas, finanças e agenda você consegue pelas ferramentas. Música, controle do computador, arquivos e e-mail só funcionam com o PC ligado: explique isso e, se o usuário quiser, use enviar_para_o_pc para deixar o pedido guardado.';
+    var d = new Date(); var dia = d.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }); var hora = pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+    return 'Você é o Zeno, assistente pessoal de voz. Agora você está no celular do usuário e o computador dele está desligado. Hoje é ' + dia + ', ' + hora + '. ' +
+      'Responda em português do Brasil, curto e simples (até 3 frases), sem jargão. Use as ferramentas para tarefas, notas, finanças e agenda. ' +
+      'Música, controle do computador, arquivos e e-mail só funcionam com o PC ligado: explique isso e, se o usuário quiser, use enviar_para_o_pc para deixar o pedido guardado. ' +
+      'Nunca invente dados; se não souber ou não tiver como fazer, diga com franqueza.';
+  }
+  // pedido guardado para o PC (o jeito de antes), com um aviso na frente
+  async function filaPC(text, wait, viaVoice, aviso) {
+    var extra = NATIVO ? { nativo: true } : {};
+    var c = await cmd('ask', Object.assign({ text: text.slice(0, 2000) }, extra));
+    pend[c.id] = { mode: 'chat', waitId: wait.id, voice: !!viaVoice };
+    pushSys((aviso ? aviso + ' ' : '') + 'O PC está desligado. Guardei o pedido: ele responde quando ligar (vale por 1 hora).');
+  }
+  async function responderLocal(text, wait, viaVoice) {
+    try {
+      var hist = ZenoCerebro.historicoDe(S.msgs.filter(function (m) { return !m.wait; }), 13);
+      if (hist.length && hist[hist.length - 1].role === 'user') hist.pop(); // a mensagem de agora vai à parte
+      var servidor = IA.prov === 'zenoia';
+      var resp = await ZenoCerebro.conversar({ prov: IA.prov, chave: servidor ? await sb.auth.token() : iaChave(), base: servidor ? ZIA_BASE + '/v1' : undefined, system: sistemaLocal(), historico: hist, texto: text.slice(0, 2000), tools: ferramentasLocais(), fetch: window.fetch.bind(window),
+        aoUso: function (z) { if (z && z.uso) { ZIA.uso = z.uso; ZIA.limites = z.limites || ZIA.limites; } } });
+      dropWait(wait.id); botMood('success', 2600);
+      pushMsg({ who: 'bot', text: resp || '(sem resposta)' });
+      if (viaVoice || S.speak) speakText(resp);
+      if (servidor) zenoiaUso(); // atualiza o medidor e a hora em que volta
+    } catch (e) {
+      if (IA.prov === 'zenoia' && e && e.codigo === 'ia_indisponivel') { // o servidor ainda não tem modelo: segue como antes (fila do PC)
+        ZIA.ativa = false; updateTop();
+        try { await filaPC(text, wait, viaVoice, 'A IA do Zeno ainda está sendo preparada.'); } catch (e2) { dropWait(wait.id); pushMsg({ who: 'sys', text: 'Não consegui guardar o pedido: ' + e2.message }); }
+        return;
+      }
+      dropWait(wait.id); botMood('crying', 2500);
+      pushMsg({ who: 'sys', text: e && e.message ? e.message : 'Não consegui responder agora.' });
+      if (e && e.codigo && e.codigo.indexOf('limite_') === 0) { if (e.zeno && e.zeno.uso) { ZIA.uso = e.zeno.uso; ZIA.limites = e.zeno.limites || ZIA.limites; } zenoiaUso(); }
+      else if (e && e.codigo === 'inativa') { ZIA.ativa = false; updateTop(); }
+    }
+  }
+
   // ---------- 1.14: app Android do Zeno (casca com plugins nativos): o PC pede contatos e arquivos do aparelho ----------
   // No navegador/iPhone nada disso existe (NATIVO = false). Os pedidos chegam como evento 'rpc' e a resposta volta como comando 'rpc_result'.
   // Ler é livre; apagar e compartilhar SEMPRE pedem Permitir/Negar na tela do celular.
@@ -497,9 +637,12 @@
     try {
       var extra = NATIVO ? { nativo: true } : {};
       if (S.loc && PEDE_LUGAR.test(text)) { var pos = await posicao(); if (pos) extra.loc = pos; }
+      // 1.16.7: com o PC desligado e a chave de IA no celular, o Zeno responde sozinho
+      if (!S.pcOnline && IA.prov === 'zenoia' && ZIA.ativa === null) await zenoiaUso(); // primeira vez: descobre se a IA do Zeno está ligada
+      if (!S.pcOnline && iaPronta()) { await responderLocal(text, wait, viaVoice); return; }
       var c = await cmd('ask', Object.assign({ text: text.slice(0, 2000) }, extra));
       pend[c.id] = { mode: 'chat', waitId: wait.id, voice: !!viaVoice };
-      if (!S.pcOnline) pushSys('O PC está desligado. Guardei o pedido: ele responde quando ligar (vale por 1 hora).');
+      if (!S.pcOnline) pushSys('O PC está desligado. Guardei o pedido: ele responde quando ligar (vale por 1 hora). Para o Zeno responder sozinho, abra Mais › IA do celular.');
     } catch (e) {
       dropWait(wait.id);
       botMood('crying', 2500);
@@ -1375,10 +1518,58 @@
     });
   }
 
+  // Mais › IA do celular: a IA do Zeno (incluída, com limite) ou a sua própria chave (guardada só neste aparelho)
+  function barraUso(rotulo, usado, limite) {
+    var pct = limite ? Math.min(100, Math.round(usado / limite * 100)) : 0;
+    return h('div', { style: 'margin:10px 0 2px' },
+      h('div', { class: 'fin-catl' }, h('span', { style: 'text-transform:none', text: rotulo }), h('b', { text: usado + ' de ' + limite })),
+      h('div', { class: 'fin-bar', style: 'margin-top:6px' }, h('i', { class: pct >= 100 ? 'bad' : pct >= 80 ? 'warn' : '', style: 'width:' + pct + '%' })));
+  }
+  function medidorZeno() {
+    if (ZIA.ativa === false) return h('p', { class: 'hint', text: 'A IA do Zeno ainda está sendo preparada para a sua conta. Enquanto isso, o Zeno responde com o PC ligado, ou com a sua própria chave (escolha outra IA acima).' });
+    if (!ZIA.uso || !ZIA.limites) return h('p', { class: 'hint', text: 'Conferindo o seu uso…' });
+    var quando = function (iso) { try { return new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch (_) { return ''; } };
+    return h('div', {}, barraUso('Hoje', ZIA.uso.dia, ZIA.limites.dia), barraUso('Nesta semana', ZIA.uso.semana, ZIA.limites.semana),
+      h('p', { class: 'hint', text: 'O uso de hoje zera à meia-noite' + (ZIA.voltaSemana && ZIA.uso.semana >= ZIA.limites.semana ? '; o da semana libera em ' + quando(ZIA.voltaSemana) : '') + '. Quando acabar, é só escolher outra IA acima e colocar a sua chave para continuar sem esperar.' }));
+  }
+  function iaCard() {
+    if (!window.ZenoCerebro) return h('span');
+    var P = ZenoCerebro.PROVS; var nome = P[IA.prov].nome; var zeno = IA.prov === 'zenoia';
+    var sel = h('select', { 'aria-label': 'Qual IA usar', onchange: function () { IA.prov = sel.value; iaSalvar(); updateTop(); if (IA.prov === 'zenoia') zenoiaUso(); else refreshView(); } },
+      ['zenoia', 'anthropic', 'openai', 'gemini', 'groq'].map(function (k) { return h('option', { value: k, selected: k === IA.prov }, k === 'zenoia' ? 'IA do Zeno (incluída, sem chave)' : P[k].nome + ' (minha chave)'); }));
+    var tem = !zeno && !!iaChave();
+    var inp = null;
+    if (!zeno) {
+      inp = h('input', { type: 'password', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', 'aria-label': 'Chave de IA', placeholder: tem ? 'Chave guardada ✔ (cole outra p/ trocar)' : 'Cole aqui a chave do ' + nome });
+    }
+    var salvar = function () {
+      var v = inp.value.trim(); if (!v) { toast('Cole a chave primeiro.'); inp.focus(); return; }
+      IA.keys[IA.prov] = v; iaSalvar(); inp.value = '';
+      toast(v.indexOf(P[IA.prov].prefixo) === 0 ? 'Chave guardada neste aparelho ✔' : 'Guardei, mas essa chave não parece ser do ' + nome + '. Use Testar para conferir.');
+      updateTop(); refreshView();
+    };
+    var testar = async function (ev) {
+      var b = ev.currentTarget; b.disabled = true; var antes = b.textContent; b.textContent = 'Testando…';
+      try { await ZenoCerebro.conversar({ prov: IA.prov, chave: iaChave(), system: 'Responda só com a palavra: ok', historico: [], texto: 'Teste', tools: [], fetch: window.fetch.bind(window) }); toast('Funcionou ✔ ' + nome + ' respondeu.'); }
+      catch (e) { toast(e.message); }
+      b.disabled = false; b.textContent = antes;
+    };
+    return h('div', { class: 'card' },
+      h('h3', { text: '🧠 IA do celular' }),
+      h('p', { class: 'hint', style: 'margin-top:6px', text: zeno ? 'A IA do Zeno vem na assinatura, sem chave. Ela responde aqui no celular, com o PC ligado ou desligado, com limite por dia e por semana.' : (tem ? 'Pronto: quando o PC estiver desligado, o Zeno responde sozinho aqui no celular (conversa, tarefas, notas e finanças).' : 'Cole a sua chave de IA e o Zeno passa a responder sozinho, sem limite do Zeno.') }),
+      sel,
+      zeno ? medidorZeno() : h('div', {}, h('div', { style: 'height:8px' }), inp,
+        h('div', { class: 'row', style: 'margin-top:10px' },
+          h('button', { class: 'btn sm', onclick: salvar }, 'Guardar'),
+          tem ? h('button', { class: 'btn sm alt', onclick: testar }, 'Testar') : null,
+          tem ? h('button', { class: 'btn sm alt', onclick: function () { delete IA.keys[IA.prov]; iaSalvar(); toast('Chave removida deste aparelho.'); updateTop(); refreshView(); } }, 'Remover') : null),
+        h('p', { class: 'hint', text: 'A chave fica só neste aparelho e nunca vai para a nuvem. Groq e Gemini têm plano grátis; Claude e ChatGPT cobram direto de você, pelo que usar.' })));
+  }
   function viewMore(el) {
     var perm = 'Notification' in window ? Notification.permission : 'unsupported';
     el.append(
       h('button', { class: 'card linkcard', onclick: function () { go('files'); } }, h('span', { class: 'lc-ic' }, icone('files')), h('div', { class: 't' }, h('b', { text: 'Arquivos' }), h('div', { class: 'muted small', text: 'Mande do celular para o PC e baixe o que o PC mandou.' })), h('span', { class: 'lc-seta', text: '›' })),
+      iaCard(),
       h('div', { class: 'sec', text: 'Alertas do PC' }),
       S.alerts.length ? h('div', {}, S.alerts.slice().reverse().slice(0, 30).map(function (a) {
         return h('div', { class: 'card alertItem' }, h('b', { text: a.title || 'Zeno' }), h('div', { text: a.body || '' }), h('div', { class: 'muted small', text: hhmm(a.at) }));
@@ -1424,7 +1615,7 @@
           perm === 'default' ? h('button', { class: 'btn sm', onclick: enableNotifications }, 'Ativar') : null),
         h('div', { class: 'item' }, h('div', { class: 't' }, 'Conta', h('div', { class: 'muted small', text: (sb.auth.user() || {}).email || '' })),
           h('button', { class: 'btn alt sm', onclick: logout }, 'Sair'))),
-      h('p', { class: 'hint', text: 'Zeno no celular 1.16.7 · O PC precisa estar ligado com o Zeno aberto.' }));
+      h('p', { class: 'hint', text: 'Zeno no celular 1.16.8 · O PC precisa estar ligado com o Zeno aberto.' }));
   }
   async function enableNotifications() {
     try {
