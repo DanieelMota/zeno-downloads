@@ -74,7 +74,7 @@
   var seenSync = {}; // chave -> updated_at já aplicado
   var tickN = 0;
   var app = document.getElementById('app');
-  var views, chatBox, tabsEl, topPill, composerTa, micBtn;
+  var views, chatBox, tabsEl, dockEl, lente, topPill, composerTa, micBtn, resizeOuvindo;
   // 1.3: o mascote do Zeno (mesmo desenho do computador) no topo, no login e na conversa vazia
   var ZM = window.ZenoMascot;
   var MASC = { o: ZM ? ZM.DEFAULTS : null, top: null, back: null };
@@ -268,22 +268,33 @@
     topPill = h('div', { class: 'pill' }, h('i'), h('span', { text: '…' }));
     views = h('div', { class: 'views' });
     tabsEl = h('div', { class: 'tabs' });
-    TABS.forEach(function (t) {
+    lente = h('i', { class: 'lente', 'aria-hidden': 'true' }); tabsEl.append(lente); // 1.16.7: a "lente" de vidro que desliza até a aba ativa
+    TABS.filter(function (t) { return t[0] !== 'more'; }).forEach(function (t) {
       tabsEl.append(h('button', { 'data-tab': t[0], 'aria-label': t[1], onclick: function () { go(t[0]); } }, h('span', { class: 'tab-ic' }, icone(t[0])), h('em', { text: t[1] })));
     });
+    // 1.16.7: "Mais" é um botão redondo de vidro, separado da barra de abas
+    dockEl = h('div', { class: 'dock' }, tabsEl, h('button', { class: 'tab-mais', 'data-tab': 'more', 'aria-label': 'Mais', onclick: function () { go('more'); } }, h('span', { class: 'tab-ic' }, icone('more'))));
+    if (!resizeOuvindo) { resizeOuvindo = true; window.addEventListener('resize', function () { if (dockEl) updateTabs(); }); }
     MASC.top = mascotEl('logo', 'idle');
     MASC.top.addEventListener('click', function () { botMood(['love', 'laugh', 'cool', 'surprised'][Math.floor(Math.random() * 4)], 1800); });
     var hora = new Date().getHours(); var oi = hora < 5 ? 'Boa noite' : hora < 12 ? 'Bom dia' : hora < 18 ? 'Boa tarde' : 'Boa noite';
-    app.append(h('div', { class: 'top' }, MASC.top, h('div', { class: 'top-t' }, h('span', { class: 'top-sub', id: 'topSub', text: oi + ' 👋' }), h('h1', { id: 'topTitulo', text: 'Zeno' })), h('span', { class: 'voz-top' }, tracos()), topPill), h('div', { id: 'bannerSlot' }), views, tabsEl);
+    app.append(h('div', { class: 'top' }, MASC.top, h('div', { class: 'top-t' }, h('span', { class: 'top-sub', id: 'topSub', text: oi + ' 👋' }), h('h1', { id: 'topTitulo', text: 'Zeno' })), h('span', { class: 'voz-top' }, tracos()), topPill), h('div', { id: 'bannerSlot' }), views, dockEl);
     buildChat();
     go(S.tab);
   }
   function updateTabs() {
-    Array.prototype.forEach.call(tabsEl.children, function (b) {
-      b.classList.toggle('on', b.getAttribute('data-tab') === S.tab);
+    var ativa = null;
+    Array.prototype.forEach.call(dockEl.querySelectorAll('button[data-tab]'), function (b) {
+      var t = b.getAttribute('data-tab'); var on = t === S.tab || (t === 'more' && S.tab === 'files');
+      b.classList.toggle('on', on); if (on && b.parentNode === tabsEl) ativa = b;
       var old = b.querySelector('.badge'); if (old) old.remove();
-      if (b.getAttribute('data-tab') === 'chat' && S.unread > 0 && S.tab !== 'chat') b.append(h('div', { class: 'badge', text: String(S.unread) }));
+      if (t === 'chat' && S.unread > 0 && S.tab !== 'chat') b.append(h('div', { class: 'badge', text: String(S.unread) }));
     });
+    document.body.setAttribute('data-tab', S.tab);
+    if (lente) {
+      if (ativa && ativa.offsetWidth) { lente.style.width = ativa.offsetWidth + 'px'; lente.style.transform = 'translateX(' + ativa.offsetLeft + 'px)'; lente.classList.add('vis'); }
+      else lente.classList.remove('vis');
+    }
   }
   function updateTop() {
     topPill.className = 'pill ' + (S.pcOnline ? 'on' : 'off');
@@ -1413,7 +1424,7 @@
           perm === 'default' ? h('button', { class: 'btn sm', onclick: enableNotifications }, 'Ativar') : null),
         h('div', { class: 'item' }, h('div', { class: 't' }, 'Conta', h('div', { class: 'muted small', text: (sb.auth.user() || {}).email || '' })),
           h('button', { class: 'btn alt sm', onclick: logout }, 'Sair'))),
-      h('p', { class: 'hint', text: 'Zeno no celular 1.12 · O PC precisa estar ligado com o Zeno aberto.' }));
+      h('p', { class: 'hint', text: 'Zeno no celular 1.16.7 · O PC precisa estar ligado com o Zeno aberto.' }));
   }
   async function enableNotifications() {
     try {

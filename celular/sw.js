@@ -1,5 +1,5 @@
 /* Zeno no celular: guarda a "casca" do app para abrir rápido. Dados e login nunca ficam em cache aqui. */
-const CACHE = 'zeno-casca-v14';
+const CACHE = 'zeno-casca-v16';
 const SHELL = ['./', 'index.html', 'app.css', 'app.js', 'sb.js', 'mascot.js', 'mascot.css', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {
