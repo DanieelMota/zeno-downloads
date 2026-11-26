@@ -304,8 +304,8 @@
     var slot = document.getElementById('bannerSlot');
     if (!slot) return;
     clear(slot);
-    if (!S.pcOnline && iaPronta()) slot.append(h('div', { class: 'banner info' }, 'O computador está desligado, mas o Zeno do celular responde sozinho' + (IA.prov === 'zenoia' && ZIA.uso && ZIA.limites ? ' (IA do Zeno: ' + ZIA.uso.dia + ' de ' + ZIA.limites.dia + ' hoje)' : '') + (IA.prov === 'zenoia' ? ': conversa, tarefas, notas, finanças, agenda e internet' : ': conversa, tarefas, notas e finanças') + '. Música e controle do PC esperam ele ligar.'));
-    else if (!S.pcOnline) slot.append(h('div', { class: 'banner' }, S.pcSeen ? 'O computador está desligado (visto às ' + hhmm(S.pcSeen) + '). Pedidos ficam guardados por 1 hora e rodam quando ele ligar.' : 'O Zeno do computador ainda não apareceu. Abra o Zeno no PC e entre com esta mesma conta.'));
+    // com o PC desligado o Zeno do celular responde sozinho: não precisa de aviso. Só avisa quando o celular NÃO consegue responder sozinho (pedidos ficam na fila do PC)
+    if (!S.pcOnline && !iaPronta()) slot.append(h('div', { class: 'banner' }, S.pcSeen ? 'O computador está desligado (visto às ' + hhmm(S.pcSeen) + '). Pedidos ficam guardados por 1 hora e rodam quando ele ligar.' : 'O Zeno do computador ainda não apareceu. Abra o Zeno no PC e entre com esta mesma conta.'));
   }
   function go(tab) {
     S.tab = tab;
@@ -483,17 +483,31 @@
           await mutate('tasks', function (l) { l.forEach(function (x) { if (x.id === id) x.done = true; }); return l; });
           return 'Tarefa concluída: ' + (ach[0].title || ach[0].text);
         } },
-      { name: 'nota_criar', description: 'Guarda uma nota rápida.', input_schema: obj({ texto: str('Texto da nota') }, ['texto']),
+      { name: 'nota_criar', description: 'Guarda uma nota. Dê um TÍTULO curto (argumento titulo) quando a nota for sobre um assunto, pessoa ou projeto; no texto, escreva [[Título de outra nota]] para ligar notas. Não repita um título que já existe.', input_schema: obj({ texto: str('Texto da nota'), titulo: str('Título curto (opcional)') }, ['texto']),
         run: async function (a) {
-          var t = String(a.texto || '').trim().slice(0, 1000); if (!t) return 'Faltou dizer o texto. Pode repetir?';
+          var G = window.ZenoGrafo; var raw = String(a.texto || '').trim().slice(0, 1000);
+          var lido = G ? G.lerTitulo(raw) : { titulo: '', corpo: raw }; var title = String(a.titulo || '').trim().slice(0, 80) || lido.titulo; if (lido.titulo) raw = lido.corpo;
+          if (!raw && !title) return 'Faltou dizer o texto. Pode repetir?';
+          if (title && G && G.resolver(S.notes, title)) return 'Já existe uma nota com o título "' + title + '". Use outro título.';
           var id = newId();
-          await mutate('notes', function (l) { l.push({ id: id, text: t, tags: [], created: Date.now() }); return l.slice(-1000); });
-          return S.notes.some(function (x) { return x.id === id; }) ? 'Nota guardada.' : 'Não consegui salvar a nota (sem internet ou assinatura inativa).';
+          await mutate('notes', function (l) { var n = { id: id, text: raw, tags: [], created: Date.now() }; if (title) n.title = title; l.push(n); return l.slice(-1000); });
+          return S.notes.some(function (x) { return x.id === id; }) ? (title ? 'Nota guardada: "' + title + '".' : 'Nota guardada.') : 'Não consegui salvar a nota (sem internet ou assinatura inativa).';
         } },
-      { name: 'notas_buscar', description: 'Procura nas notas do usuário (sem busca, mostra as últimas).', input_schema: obj({ busca: str('Palavra para procurar') }),
+      { name: 'notas_buscar', description: 'Procura nas notas do usuário, pelo título ou pelo texto (sem busca, mostra as últimas). Mostra para onde cada nota aponta ([[links]]) e quem a cita.', input_schema: obj({ busca: str('Palavra para procurar') }),
         run: async function (a) {
-          var q = norm(a.busca); var l = S.notes.filter(function (n) { return !q || norm(n.text).indexOf(q) >= 0; }).slice(-8);
-          return l.length ? l.map(function (n) { return '- ' + String(n.text).slice(0, 200); }).join('\n') : 'Nenhuma nota' + (q ? ' com essa palavra.' : '.');
+          var G = window.ZenoGrafo; var q = norm(a.busca); var l = S.notes.filter(function (n) { return !q || norm((n.title || '') + ' ' + n.text).indexOf(q) >= 0; }).slice(-8);
+          return l.length ? l.map(function (n) { return '- ' + (G ? G.linhaIA(n, S.notes, 200) : String(n.text).slice(0, 200)); }).join('\n') : 'Nenhuma nota' + (q ? ' com essa palavra.' : '.');
+        } },
+      { name: 'nota_abrir', description: 'Abre uma nota pelo TÍTULO: mostra o texto inteiro, as notas para onde ela aponta e as que a citam. Use para seguir as ligações entre as notas.', input_schema: obj({ titulo: str('Título da nota') }, ['titulo']),
+        run: async function (a) {
+          var G = window.ZenoGrafo; var q = norm(a.titulo); if (!q) return 'Faltou o título.';
+          var n = (G && G.resolver(S.notes, a.titulo)) || S.notes.filter(function (x) { return norm((x.title || '') + ' ' + x.text).indexOf(q) >= 0; })[0];
+          if (!n) return 'Não achei a nota "' + String(a.titulo).slice(0, 60) + '".';
+          var lig = G ? G.ligacoes(S.notes, n) : { saem: [], entram: [] };
+          var p = [(n.title ? 'Nota "' + n.title + '": ' : 'Nota: ') + (String(n.text || '').slice(0, 900) || '(sem texto)')];
+          if (lig.saem.length) p.push('Liga a: ' + lig.saem.map(function (x) { return x.alvo + (x.nota ? '' : ' (ainda não existe)'); }).join(', ') + '.');
+          if (lig.entram.length) p.push('Citada por: ' + lig.entram.map(function (x) { return G.nome(x, 50); }).join(', ') + '.');
+          return p.join(' ');
         } },
       { name: 'gasto_registrar', description: 'Anota um gasto ou uma receita nas finanças. O valor vai em reais (ex.: 35.5).', input_schema: obj({ valor: { type: 'number', description: 'Valor em reais' }, descricao: str('Com o quê (ex.: mercado, uber)'), tipo: { type: 'string', enum: ['gasto', 'receita'] } }, ['valor', 'descricao']),
         run: async function (a) {
@@ -653,6 +667,7 @@
   async function submit(text, viaVoice) {
     text = String(text != null ? text : composerTa.value).trim();
     if (!text) return;
+    if (!viaVoice) pararVoz(); // enviou escrevendo/tocando em enviar: o microfone para de ouvir (antes ele seguia ouvindo e reescrevia a caixa)
     composerTa.value = ''; composerTa.style.height = 'auto';
     if (S.tab !== 'chat') go('chat');
     pushMsg({ who: 'me', text: text.slice(0, 2000) });
@@ -679,7 +694,15 @@
 
   // ---------- voz ----------
   var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  var rec = null;
+  var rec = null; var micDescartar = false; var micTempo = 0;
+  // para o microfone SEM enviar o que ele ouviu (quem enviou foi a pessoa)
+  function pararVoz() {
+    if (!S.listening) return;
+    micDescartar = true; clearTimeout(micTempo);
+    if (NATIVO && plug('SpeechRecognition')) { try { plug('SpeechRecognition').stop(); } catch (_) { /* já parou */ } }
+    else if (rec) { try { rec.abort(); } catch (_) { try { rec.stop(); } catch (__) { /* já parou */ } } }
+    S.listening = false; micBtn.classList.remove('rec'); micIcone(false); botMood(S.pcOnline ? 'idle' : 'sleeping');
+  }
   // 1.14: no app Android o navegador embutido não tem ditado: usa o reconhecimento de fala do Android (plugin)
   async function micNativo() {
     var SP = plug('SpeechRecognition'); var W = plug('ZenoWakeNativo');
@@ -690,9 +713,11 @@
       if (perm && perm.speechRecognition === 'denied') { toast('Libere o microfone para o Zeno nos ajustes do Android.'); return; }
       if (W) { try { await W.pausar(); } catch (_) { /* sem Ei Zeno */ } }
       S.listening = true; micBtn.classList.add('rec'); micIcone(true); botMood('listening'); go('chat');
+      micDescartar = false;
       var r = await SP.start({ language: 'pt-BR', maxResults: 1, partialResults: false, popup: false });
       fim();
       var t = r && r.matches && r.matches[0] ? String(r.matches[0]).trim() : '';
+      if (micDescartar) { micDescartar = false; return; } // a pessoa já enviou por escrito
       if (t) submit(t, true);
     } catch (e) { fim(); toast('Não consegui ouvir. Tente de novo.'); }
   }
@@ -709,13 +734,17 @@
         for (var i = 0; i < ev.results.length; i++) { t += ev.results[i][0].transcript; if (ev.results[i].isFinal) finalText = t; }
         composerTa.value = t;
       };
-      rec.onerror = function (ev) { toast(ev.error === 'not-allowed' ? 'Libere o microfone: Ajustes › Safari › Microfone (ou use o 🎤 do teclado para ditar).' : 'Não consegui ouvir (' + ev.error + ').'); };
+      rec.onerror = function (ev) { if (ev.error === 'aborted') return; if (ev.error === 'no-speech') { toast('Não ouvi nada. Tente de novo.'); return; } toast(ev.error === 'not-allowed' ? 'Libere o microfone: Ajustes › Safari › Microfone (ou use o 🎤 do teclado para ditar).' : 'Não consegui ouvir (' + ev.error + ').'); };
       rec.onend = function () {
+        clearTimeout(micTempo);
         S.listening = false; micBtn.classList.remove('rec'); micIcone(false); botMood(S.pcOnline ? 'idle' : 'sleeping');
+        if (micDescartar) { micDescartar = false; return; } // a pessoa enviou por escrito: não envia de novo
         var t = (finalText || composerTa.value).trim();
         if (t) submit(t, true);
       };
+      micDescartar = false;
       rec.start();
+      clearTimeout(micTempo); micTempo = setTimeout(function () { if (S.listening && rec) { try { rec.stop(); } catch (_) { /* já parou */ } } }, 20000); // no iPhone o navegador às vezes não encerra sozinho
       S.listening = true; micBtn.classList.add('rec'); micIcone(true); botMood('listening');
       go('chat');
     } catch (e) { toast('Não consegui abrir o microfone.'); }
@@ -1321,28 +1350,48 @@
   }
 
   function listNotes(el) {
+    var G = window.ZenoGrafo || null; // notas ligadas (grafo.js); sem ele o app segue com notas simples
     var q = h('input', { type: 'text', placeholder: 'Procurar nas notas…', 'aria-label': 'Procurar' });
     var box = h('div', {});
-    var inp = h('input', { type: 'text', placeholder: 'Nova nota (use #tags)…', enterkeyhint: 'done' });
+    var inp = h('input', { type: 'text', placeholder: 'Nova nota (# Título | texto)…', enterkeyhint: 'done' });
     var go1 = function () {
       var v = inp.value.trim(); if (!v) return;
-      var tags = []; var text = v.replace(/#([\p{L}\p{N}_-]{1,24})/gu, function (_, t) { t = t.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''); if (tags.indexOf(t) < 0 && tags.length < 6) tags.push(t); return ''; }).replace(/\s+/g, ' ').trim() || v;
+      var lido = G ? G.lerTitulo(v) : { titulo: '', corpo: v };
+      var base = lido.titulo ? lido.corpo : v;
+      if (lido.titulo && G.resolver(S.notes, lido.titulo)) { toast('Já existe uma nota com esse título.'); return; }
+      var tags = []; var text = base.replace(/#([\p{L}\p{N}_-]{1,24})/gu, function (_, t) { t = t.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''); if (tags.indexOf(t) < 0 && tags.length < 6) tags.push(t); return ''; }).replace(/\s+/g, ' ').trim() || base;
       inp.value = '';
-      mutate('notes', function (a) { a.push({ id: newId(), text: text.slice(0, 1000), tags: tags, created: Date.now() }); return a.slice(-1000); });
+      var nova = { id: newId(), text: text.slice(0, 1000), tags: tags, created: Date.now() }; if (lido.titulo) nova.title = lido.titulo;
+      mutate('notes', function (a) { a.push(nova); return a.slice(-1000); });
     };
     inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') go1(); });
     el.append(h('div', { class: 'add' }, inp, h('button', { class: 'btn sm', onclick: go1 }, '＋')), q, box);
     function norm(x) { return String(x || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''); }
+    // toca num [[link]]: abre a nota (filtra pelo título); se ela ainda não existe, cria só com o título
+    function abrir(alvo) {
+      var ex = G && G.resolver(S.notes, alvo);
+      if (ex) { q.value = ex.title; draw(); return; }
+      Promise.resolve(mutate('notes', function (a) { a.push({ id: newId(), text: '', tags: [], created: Date.now(), title: String(alvo).slice(0, 80) }); return a.slice(-1000); })).then(function () { q.value = alvo; draw(); });
+    }
+    function chipLink(rot, alvo, existe) { return h('button', { class: 'lnk' + (existe ? '' : ' off'), title: existe ? 'Abrir a nota' : 'Ainda não existe: toque para criar', onclick: function () { abrir(alvo); } }, rot); }
     function draw() {
       clear(box);
       var words = norm(q.value).split(/\s+/).filter(Boolean);
       var list = S.notes.slice().sort(function (a, b) { return b.created - a.created; }).filter(function (n) {
-        var hay = norm(n.text + ' ' + (n.tags || []).join(' ')); return words.every(function (w) { return hay.indexOf(w) >= 0; });
+        var hay = norm((n.title || '') + ' ' + n.text + ' ' + (n.tags || []).join(' ')); return words.every(function (w) { return hay.indexOf(w) >= 0; });
       });
-      if (!list.length) { box.append(h('p', { class: 'hint', text: S.notes.length ? 'Nenhuma nota com isso.' : 'Nenhuma nota ainda. Diga ao Zeno: “anota: …” ou escreva aqui.' })); return; }
+      if (!list.length) { box.append(h('p', { class: 'hint', text: S.notes.length ? 'Nenhuma nota com isso.' : 'Nenhuma nota ainda. Diga ao Zeno: “anota: …” ou escreva aqui. Dê título com “# Título | texto” e ligue notas com [[Título]].' })); return; }
       list.slice(0, 80).forEach(function (n) {
-        box.append(h('div', { class: 'item' }, h('div', { class: 't' }, n.text,
-          h('div', { class: 'muted small' }, new Date(n.created).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }), (n.tags || []).map(function (t) { return h('span', { class: 'tag', text: '#' + t }); }))),
+        var corpo = h('div', { class: 't' });
+        if (n.title) corpo.append(h('b', { text: n.title }), h('span', { text: n.text ? ' · ' : '' }));
+        (G ? G.partes(n.text) : [{ t: 'txt', v: n.text }]).forEach(function (p) {
+          if (p.t === 'txt') corpo.append(h('span', { text: p.v }));
+          else corpo.append(chipLink(p.rotulo, p.alvo, !!G.resolver(S.notes, p.alvo)));
+        });
+        var lig = G ? G.ligacoes(S.notes, n) : { saem: [], entram: [] };
+        var tail = [h('div', { class: 'muted small' }, new Date(n.created).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }), (n.tags || []).map(function (t) { return h('span', { class: 'tag', text: '#' + t }); }))];
+        if (lig.entram.length) tail.push(h('div', { class: 'muted small' }, h('span', { text: 'Citada por: ' }), lig.entram.slice(0, 6).map(function (x) { return h('span', {}, chipLink(G.nome(x, 28), x.title || G.nome(x, 28), true), h('span', { text: ' ' })); })));
+        box.append(h('div', { class: 'item' }, h('div', { class: 't' }, corpo, tail),
           h('button', { class: 'x', 'aria-label': 'Apagar', onclick: function () { mutate('notes', function (a) { return a.filter(function (x) { return x.id !== n.id; }); }); } }, '✕')));
       });
     }
